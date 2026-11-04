@@ -5,8 +5,8 @@ Each phase ends with: run the app, test, fix, update docs, report, then **stop**
 | Phase | Name | Status |
 |---|---|---|
 | 1 | Foundation | ✅ Complete (2026-11-02) |
-| 2 | CR Analysis | ✅ Built and tested (2026-11-02). Real-document AI extraction awaits an API key |
-| 3 | Test Scenario Studio | Not started |
+| 2 | CR Analysis → QA Test Scenarios | ✅ Built and tested. One function: FRS → test scenario workbook → review → export (2026-11-04) |
+| 3 | Scenario quality & RTM | Not started (scenario generation and review moved into Phase 2) |
 | 4 | Test Case & Template Engine | Not started |
 | 5 | Playwright Automation Studio | Not started |
 | 6 | Self-Healing Engine | Not started |
@@ -27,7 +27,10 @@ Acceptance criteria, all verified (see TEST_RESULTS.md):
 - [x] Files upload securely (type, content, size, path checks) and download byte-identical
 - [x] Implemented features are tested (44 API/unit + 11 UI tests)
 
-## Phase 2 — CR Analysis ✅ (one acceptance item pending your API key)
+## Phase 2 — CR Analysis ✅
+
+**Changed on 2026-11-04 at the user's request:** the requirement extraction, requirement review and requirements workbook were replaced by **one function**: Generate test scenarios (the user's QA prompt) → review / approve each scenario in the app → export the Excel. Live runs: CR3657 (45 scenarios) and FL30753 (72 scenarios) through Claude Code. The text below is the original Phase 2 plan, kept for history.
+
 
 Status of the acceptance criteria below (details in TEST_RESULTS.md):
 - [ ] Upload a real CR → actual requirements extracted with correct source references. **Not yet run against the live model**: no API key is configured. The full pipeline is tested with a scripted AI client and a fake HTTP layer, and extraction is tested on real PDF/DOCX/XLSX files.
@@ -49,8 +52,8 @@ Acceptance:
 - Download an editable, valid requirements workbook
 - Without an API key, the UI says AI is not connected and no fake results appear
 
-## Phase 3 — Test Scenario Studio
-Scenario generation from approved requirements; `CR30045-TS-001` numbering; second-pass completeness check (missing negatives, roles, transitions, duplicates, unsupported assumptions); scenario editor with approval; RTM links; four-sheet professional XLSX export (Information, Test Scenarios, RTM, Review Summary) with frozen headers, filters, dropdowns and print setup.
+## Phase 3 — Scenario quality & RTM
+Scenario generation, review and the Excel workbook were delivered in Phase 2 (one CR analysis function, at the user's request on 2026-11-04). What is left for this phase: in-app views of the decision tables, coverage and clarifications sheets; comparing two runs of the same CR; RTM links from scenarios to test cases, executions and defects as those are built.
 
 ## Phase 4 — Test Case & Template Engine
 Template library (upload, inspect sheets, styles, formulas, merged cells and images; suggest and save field mapping; versioning). Test case generation from approved scenarios. SITCR and UAT Evidence Pack generation **into the user's own template**, preserving formatting and formulas. Workbook validation before download.

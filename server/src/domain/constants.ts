@@ -7,10 +7,26 @@ export const ENVIRONMENT_TYPES = ['SIT', 'UAT', 'LOCAL', 'CUSTOM'] as const;
 export const EXECUTION_STATUSES = ['NOT_STARTED', 'IN_PROGRESS', 'PASSED', 'FAILED', 'BLOCKED', 'NOT_APPLICABLE'] as const;
 export const OPEN_DEFECT_STATUSES = ['OPEN', 'IN_PROGRESS', 'RETEST', 'REOPENED'] as const;
 
-// Requirements (Phase 2)
-export const REQUIREMENT_TYPES = ['FUNCTIONAL', 'NON_FUNCTIONAL'] as const;
-export const REQUIREMENT_CLASSIFICATIONS = ['EXPLICIT', 'INFERRED', 'ASSUMPTION', 'CLARIFICATION_REQUIRED'] as const;
-export const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH'] as const;
+// Review of generated test scenarios
+// Test Scenario Type values (the user's QA prompt, section 6)
+export const SCENARIO_TYPES = [
+  'Positive',
+  'Negative',
+  'Main Flow',
+  'Alternative Flow',
+  'Business Rule',
+  'Validation',
+  'Boundary',
+  'Status / Workflow',
+  'Role / Access',
+  'Enhancement',
+  'WIP',
+  'Non-WIP',
+  'Data Behaviour',
+  'Integration',
+  'Regression',
+  'Exception / Error',
+] as const;
 export const REVIEW_STATUSES = ['PENDING', 'APPROVED', 'REJECTED', 'CLARIFICATION_REQUIRED'] as const;
 
 // Agent tasks

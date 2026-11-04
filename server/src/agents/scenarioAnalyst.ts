@@ -1,33 +1,18 @@
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
-import { buildScenarioWorkbook, validateScenarioWorkbook } from '../exports/scenarioWorkbook.js';
+import { SCENARIO_TYPES } from '../domain/constants.js';
+import { scenarioToRow, writeScenarioRevision } from '../domain/scenarios.js';
+import { saveScenarioExport } from '../exports/scenarioWorkbook.js';
 import { AiError } from '../lib/ai.js';
 import { audit } from '../lib/audit.js';
-import { NOT_CONNECTED_MESSAGE, loadTaskDocuments, renderDocuments, resolveSource, type AnalysedDocument } from './crAnalyst.js';
+import { NOT_CONNECTED_MESSAGE, loadTaskDocuments, renderDocuments, resolveSource, type AnalysedDocument } from './documents.js';
 import type { TaskHandler } from './runner.js';
 import { OUTPUT_NOTE, USER_SCENARIO_PROMPT } from './scenarioPrompt.js';
 
 export const SCENARIO_ANALYST = 'SCENARIO_ANALYST';
 export const SCENARIO_TIMEOUT_MS = 30 * 60 * 1000;
 
-export const SCENARIO_TYPES = [
-  'Positive',
-  'Negative',
-  'Main Flow',
-  'Alternative Flow',
-  'Business Rule',
-  'Validation',
-  'Boundary',
-  'Status / Workflow',
-  'Role / Access',
-  'Enhancement',
-  'WIP',
-  'Non-WIP',
-  'Data Behaviour',
-  'Integration',
-  'Regression',
-  'Exception / Error',
-] as const;
+export { SCENARIO_TYPES };
 const COVERAGE = ['Covered', 'Partially Covered', 'Not Covered', 'N/A', 'TBD'] as const;
 const text = z.string();
 
@@ -131,6 +116,9 @@ export type Scenario = Omit<ScenarioAnswer['scenarios'][number], 'key' | 'docume
   sourceReference: string | null;
   sourceQuote: string | null;
   sourceVerified: boolean;
+  /** Present once stored: the current review decision. */
+  reviewStatus?: string;
+  reviewComment?: string | null;
 };
 export type CheckedWorkbook = Omit<ScenarioAnswer, 'scenarios' | 'decisionTables' | 'requirementCoverage' | 'wipCoverage' | 'enhancementCoverage' | 'clarifications'> & {
   scenarios: Scenario[];
@@ -246,7 +234,7 @@ function countBy(rows: Scenario[], pick: (s: Scenario) => string): [string, numb
   return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
-function summarise(scenarios: Scenario[], tables: CheckedWorkbook['decisionTables'], clarifications: number, wipApplicable: boolean): Summary {
+export function summarise(scenarios: Scenario[], tables: CheckedWorkbook['decisionTables'], clarifications: number, wipApplicable: boolean): Summary {
   const has = (t: (typeof SCENARIO_TYPES)[number]) => scenarios.filter((s) => s.types.includes(t)).length;
   const combos = tables.flatMap((t) => t.combinations);
   const totals: [string, number][] = [
@@ -297,43 +285,65 @@ export function scenarioAnalystHandler({ db, storage, ai }: AppContext): TaskHan
     if (signal.aborted) throw new AiError('CANCELLED', 'Cancelled.');
     if (!result.data.scenarios.length) throw new Error('The analyst returned no test scenarios. Nothing was saved.');
 
-    await progress(88, 'Checking cross-references and building the Excel workbook');
+    await progress(88, `Checking and saving ${result.data.scenarios.length} scenario(s)`);
     const checked = checkScenarioAnswer(result.data, cr.crNumber, docs);
+    const documents = docs.map((d) => `${d.doc.originalName} (v${d.doc.version})`);
 
-    const name = `${cr.crNumber} Test Scenarios`;
-    const latest = await db.generatedArtifact.findFirst({ where: { projectId: cr.projectId, name }, orderBy: { version: 'desc' } });
-    const version = (latest?.version ?? 0) + 1;
-    const fileName = `${cr.crNumber}_Test_Scenarios_v${version}.xlsx`;
-    const data = await buildScenarioWorkbook({ project: cr.project, cr, workbook: checked, version, model: result.model, documents: docs.map((d) => `${d.doc.originalName} (v${d.doc.version})`) });
-    const problems = await validateScenarioWorkbook(data, checked.scenarios.length);
-    if (problems.length) throw new Error(`The generated workbook failed validation: ${problems.join('; ')}. Nothing was saved.`);
-
-    const file = await storage.saveBuffer(`projects/${cr.projectId}/crs/${cr.id}/artifacts`, fileName, data);
-    const artifact = await db.$transaction(async (tx) => {
-      const a = await tx.generatedArtifact.create({
-        data: {
+    // Save the run: one workbook record (the other sheets) + one row per scenario, each with revision 1.
+    const workbook = await db.$transaction(
+      async (tx) => {
+        const prev = await tx.scenarioWorkbook.findFirst({ where: { crId: cr.id }, orderBy: { version: 'desc' } });
+        const w = await tx.scenarioWorkbook.create({
+          data: {
+            crId: cr.id,
+            agentTaskId: task.id,
+            version: (prev?.version ?? 0) + 1,
+            model: result.model,
+            documents: JSON.stringify(documents),
+            dimensions: JSON.stringify(checked.dimensions),
+            wip: JSON.stringify(checked.wip),
+            enhancement: JSON.stringify(checked.enhancement),
+            decisionTables: JSON.stringify(checked.decisionTables),
+            requirementCoverage: JSON.stringify(checked.requirementCoverage),
+            wipCoverage: JSON.stringify(checked.wipCoverage),
+            enhancementCoverage: JSON.stringify(checked.enhancementCoverage),
+            clarifications: JSON.stringify(checked.clarifications),
+            selfReview: JSON.stringify(checked.selfReview),
+            checks: JSON.stringify(checked.checks),
+          },
+        });
+        for (const s of checked.scenarios) {
+          const row = await tx.testScenario.create({ data: { ...scenarioToRow(s), crId: cr.id, workbookId: w.id, origin: 'AI' } });
+          await writeScenarioRevision(tx, row, `Generated by ${result.model}`);
+          await audit(tx, { projectId: cr.projectId, entityType: 'TestScenario', entityId: row.id, action: 'CREATED', summary: `${row.scenarioCode} generated (workbook v${w.version})${row.sourceVerified ? '' : ' — source not verified'}` });
+        }
+        if (cr.analysisStatus === 'NOT_STARTED' || cr.analysisStatus === 'IN_PROGRESS') {
+          await tx.changeRequest.update({ where: { id: cr.id }, data: { analysisStatus: 'ANALYSED' } });
+          await audit(tx, { projectId: cr.projectId, entityType: 'ChangeRequest', entityId: cr.id, action: 'UPDATED', summary: `CR ${cr.crNumber} analysed: ${checked.scenarios.length} test scenarios generated`, changes: { analysisStatus: { from: cr.analysisStatus, to: 'ANALYSED' } } });
+        }
+        await audit(tx, {
           projectId: cr.projectId,
-          crId: cr.id,
-          artifactType: 'SCENARIOS_XLSX',
-          name,
-          version,
-          fileName,
-          storageKey: file.key,
-          mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-          sizeBytes: file.sizeBytes,
-          sha256: file.sha256,
-        },
-      });
-      await audit(tx, { projectId: cr.projectId, entityType: 'GeneratedArtifact', entityId: a.id, action: 'GENERATED', summary: `Generated ${fileName} (${checked.scenarios.length} test scenarios)` });
-      return a;
-    });
+          entityType: 'ScenarioWorkbook',
+          entityId: w.id,
+          action: 'CREATED',
+          summary: `Scenario workbook v${w.version} for ${cr.crNumber}: ${checked.scenarios.length} scenarios, ${checked.clarifications.length} clarifications`,
+        });
+        return w;
+      },
+      { timeout: 120_000 },
+    );
+
+    await progress(95, 'Building the Excel workbook');
+    const artifact = await saveScenarioExport({ db, storage }, workbook.id, 'all');
 
     return {
       model: result.model,
       usage: result.usage,
       output: {
+        workbookId: workbook.id,
+        workbookVersion: workbook.version,
         artifactId: artifact.id,
-        fileName,
+        fileName: artifact.fileName,
         scenarioCount: checked.scenarios.length,
         clarificationCount: checked.clarifications.length,
         decisionTableCount: checked.decisionTables.length,

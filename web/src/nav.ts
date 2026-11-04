@@ -10,7 +10,6 @@ import {
   GitBranch,
   Images,
   LayoutDashboard,
-  ListChecks,
   type LucideIcon,
   Network,
   PackageOpen,
@@ -45,8 +44,7 @@ export const NAV: NavGroup[] = [
   {
     label: 'Design tests',
     items: [
-      { path: '/cr-analysis', label: 'CR Analysis Studio', icon: FileSearch, phase: 2, summary: 'Parse uploaded CR documents and extract testable requirements with source references, then review, edit and approve them.' },
-      { path: '/scenarios', label: 'Test Scenario Studio', icon: ListChecks, phase: 3, summary: 'Generate traceable scenarios from approved requirements, check coverage and duplicates, and export a professional Excel workbook.' },
+      { path: '/cr-analysis', label: 'CR Analysis Studio', icon: FileSearch, phase: 2, summary: 'Upload a CR / FRS, generate traceable QA test scenarios with decision tables and coverage, review and approve them, and export the Excel workbook.' },
       { path: '/test-cases', label: 'Test Case Studio', icon: ClipboardCheck, phase: 4, summary: 'Turn approved scenarios into step-by-step test cases you can edit one at a time.' },
       { path: '/sitcr', label: 'SITCR Manager', icon: FileSpreadsheet, phase: 4, summary: 'Analyse your real SITCR template, map its fields and generate SITCR workbooks that keep its formatting and formulas.' },
       { path: '/uat-pack', label: 'UAT Evidence Pack', icon: ScrollText, phase: 4, summary: 'Convert SITCR into your UAT Evidence Pack format. Screenshot insertion arrives in Phase 7.' },

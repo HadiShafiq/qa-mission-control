@@ -1,5 +1,22 @@
 # Test results
 
+## One CR analysis function: QA test scenarios — 2026-11-04
+
+Windows 11, Node.js 24.18, Playwright 1.64, Claude Code 2.1.316 (subscription).
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` (server + web) | ✅ no errors |
+| `npm test` | ✅ **112 / 112** (9 files; new `test/scenario-review.test.ts`; requirement tests removed with the feature) |
+| `npm run test:e2e` | ✅ **24 / 24** (Phase 2 UI tests rewritten for scenarios) |
+| Server starts with `npm run dev` | ✅ after fixing an import cycle found by the UI test server (`SCENARIO_TYPES` used before initialisation); the API tests had not caught it because of different import order |
+| Live run CR3657 (`CR3657_Consolidated_FRS_Updated.docx`) | ✅ 795 s; **41 scenarios saved** as workbook run v1 (rows + revision 1 + audit), 15 clarifications, 2 decision tables, WIP N/A, enhancement applicable; `CR3657_Test_Scenarios_v2.xlsx` exported from the saved rows. App checks: 1 scenario not referenced by coverage / decision tables (CR3657-TS-039), 2 quotes not found in the text, WIP rows dropped because WIP was declared N/A |
+
+API tests added: without AI → 409 and nothing created; removed routes (`/analyse`, `/requirements`, `/exports/requirements`) return 404; AI error / schema mismatch → FAILED, no workbook or scenario; scanned PDF fails without calling the model; one run per CR, cancel saves nothing; crash recovery; generation stores rows with revision 1, verified sources and audit entries; edit → revision + field diff, hand-edited reference loses "verified"; approve / clarification / approval reset on edit; bulk review and filters; manual add gets the next ID; export reflects edits and Review Status, approved-only export keeps only approved rows and recalculates the summary; second run = workbook v2 shown by default, v1 kept, counts and dashboard use the newest run; archived CR read-only.
+
+UI tests (scenarios stored straight into the test database the way a run saves them, because the UI test server has no AI): no requirement panels on the page; generation disabled without AI; extraction preview; review table with counts and sources; edit → revision compare → approve; copy; bulk clarification and filters (status, type); add by hand; export with Review Status and approved-only; newer run shown by default, older selectable; studio count, CR history and dashboard; New analysis (filename + document reading, duplicate CR refused); 390 px without overflow.
+
+
 ## Phase 2 — CR Analysis — 2026-11-02
 
 Environment: **Windows 11 Pro** (10.0.26200), Node.js 24.18, Playwright 1.64 (Chromium). No Anthropic API key configured.

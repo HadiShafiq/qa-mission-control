@@ -70,7 +70,7 @@ export function CrDetailPage() {
             !projectArchived && (
               <>
                 <Link to={`/cr-analysis/${cr.id}`} className={buttonVariants({ variant: 'primary' })}>
-                  <FileSearch /> Analyse requirements
+                  <FileSearch /> Open in CR Analysis Studio
                 </Link>
                 <Button onClick={() => setEditOpen(true)}>
                   <Pencil /> Edit
@@ -104,14 +104,11 @@ export function CrDetailPage() {
               <Detail label="Evidence">
                 <StatusBadge status={cr.evidenceStatus} />
               </Detail>
-              <Detail label="Requirements">
-                {cr.requirementCount}{' '}
+              <Detail label="Test scenarios">
+                {cr.scenarioCount}{' '}
                 <Link to={`/cr-analysis/${cr.id}`} className="text-[13px] font-medium text-signal hover:underline">
-                  Open in CR Analysis Studio
+                  Review in CR Analysis Studio
                 </Link>
-              </Detail>
-              <Detail label="Scenarios">
-                {cr.scenarioCount} <span className="text-[12px] text-ink-3">(generated from phase 3)</span>
               </Detail>
               <div className="sm:col-span-3">
                 <dt className="text-[12.5px] text-ink-3">Description</dt>
@@ -272,7 +269,7 @@ export function Documents({ crId, readOnly }: { crId: string; readOnly: boolean 
           <Skeleton className="h-10" />
         </div>
       ) : docs.data.length === 0 ? (
-        <EmptyState icon={<FileText />} title={showArchived ? 'No documents' : 'No documents uploaded'} body={readOnly ? undefined : 'Upload the CR specification (FRS, BRS or URS), then analyse it in the CR Analysis Studio.'} />
+        <EmptyState icon={<FileText />} title={showArchived ? 'No documents' : 'No documents uploaded'} body={readOnly ? undefined : 'Upload the CR specification (FRS, BRS or URS), then generate its test scenarios in the CR Analysis Studio.'} />
       ) : (
         <ul className="divide-y divide-line border-t border-line" data-testid="document-list">
           {docs.data.map((d) => (

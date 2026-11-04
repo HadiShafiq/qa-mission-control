@@ -6,6 +6,7 @@ import { EmptyState, ErrorNotice, PageHeader, Panel, Skeleton, StatusBadge } fro
 import { HistoryList } from '@/components/HistoryList';
 import { api, type DashboardSummary } from '@/lib/api';
 import { cn, timeAgo } from '@/lib/utils';
+import { BUILT_PHASE } from '@/nav';
 
 export function OverviewPage() {
   const q = useQuery({
@@ -124,9 +125,9 @@ function Dashboard({ d }: { d: DashboardSummary }) {
 
           <Panel title="Pending approvals" id="approvals">
             {c.pendingApprovals === 0 ? (
-              <EmptyState icon={<Inbox />} title="Nothing waiting for you" body="Extracted requirements waiting for review are counted here." />
+              <EmptyState icon={<Inbox />} title="Nothing waiting for you" body="Generated test scenarios waiting for review are counted here." />
             ) : (
-              <p className="px-4 py-3">{c.pendingApprovals} item(s) need review. Open a CR in the CR Analysis Studio to review its requirements.</p>
+              <p className="px-4 py-3">{c.pendingApprovals} test scenario(s) need review. Open a CR in the CR Analysis Studio to approve them.</p>
             )}
           </Panel>
 
@@ -143,7 +144,7 @@ function Dashboard({ d }: { d: DashboardSummary }) {
               <EmptyState
                 icon={<Bot />}
                 title="No agent runs yet"
-                body={d.ai.configured ? 'Run the CR Analyst from the CR Analysis Studio.' : 'AI is not connected. Add ANTHROPIC_API_KEY to server/.env to use the CR Analyst.'}
+                body={d.ai.configured ? 'Generate test scenarios from a CR in the CR Analysis Studio.' : 'AI is not connected. Sign in to Claude Code or set ANTHROPIC_API_KEY in server/.env.'}
               />
             ) : (
               <ul className="divide-y divide-line">
@@ -173,8 +174,13 @@ function TraceChain({ d }: { d: DashboardSummary }) {
   const stages: { label: string; value: string; sub: string; phase: number; to?: string }[] = [
     { label: 'Projects', value: String(c.totalProjects), sub: 'active', phase: 1, to: '/projects' },
     { label: 'Change requests', value: String(c.totalCrs), sub: `${c.sourceDocuments} source document${c.sourceDocuments === 1 ? '' : 's'}`, phase: 1, to: '/projects?tab=crs' },
-    { label: 'Requirements', value: String(c.requirements), sub: c.uncoveredRequirements ? `${c.uncoveredRequirements} without scenarios` : 'extracted', phase: 2 },
-    { label: 'Scenarios', value: String(c.scenarios), sub: `${c.approvedScenarios} approved`, phase: 3 },
+    {
+      label: 'Test scenarios',
+      value: String(c.scenarios),
+      sub: `${c.approvedScenarios} approved${c.clarificationScenarios ? `, ${c.clarificationScenarios} need clarification` : ''}`,
+      phase: 2,
+      to: '/cr-analysis',
+    },
     { label: 'Test cases', value: String(c.testCases), sub: c.testCases ? `${c.notRun} not run` : 'generated', phase: 4 },
     { label: 'Executed', value: String(c.passed + c.failed + c.blocked), sub: `${c.passed} passed, ${c.failed} failed, ${c.blocked} blocked`, phase: 5 },
     { label: 'Open defects', value: String(c.openDefects), sub: 'open, in progress or retest', phase: 8 },
@@ -183,7 +189,7 @@ function TraceChain({ d }: { d: DashboardSummary }) {
     <section aria-label="Traceability chain" className="overflow-x-auto rounded-lg border border-line bg-surface">
       <ol className="flex min-w-[860px]" data-testid="trace-chain">
         {stages.map((s, i) => {
-          const built = s.phase <= 1;
+          const built = s.phase <= BUILT_PHASE;
           const body = (
             <>
               <span className="text-[12.5px] text-ink-2">{s.label}</span>

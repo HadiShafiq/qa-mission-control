@@ -15,7 +15,7 @@ const columns: ColumnDef<ChangeRequest, unknown>[] = [
   { accessorKey: 'title', header: 'Title', cell: ({ row }) => <span className="line-clamp-1">{row.original.title}</span> },
   { id: 'project', accessorFn: (c) => c.project.code, header: 'Project' },
   { accessorKey: 'documentCount', header: 'Documents' },
-  { accessorKey: 'requirementCount', header: 'Requirements' },
+  { accessorKey: 'scenarioCount', header: 'Test scenarios' },
   { accessorKey: 'analysisStatus', header: 'Analysis', cell: ({ row }) => <StatusBadge status={row.original.analysisStatus} /> },
   { accessorKey: 'updatedAt', header: 'Updated', cell: ({ row }) => <span className="text-ink-2">{timeAgo(row.original.updatedAt)}</span> },
 ];
@@ -30,7 +30,7 @@ export function AnalysisStudioPage() {
     <>
       <PageHeader
         title="CR Analysis Studio"
-        description="Start a new analysis for a CR document, or open an existing CR to review, edit and approve its requirements."
+        description="Start a new analysis for a CR / FRS document, or open an existing CR to review, edit, approve and export its test scenarios."
         actions={
           <Button variant="primary" onClick={() => setCreating(true)} data-testid="new-analysis">
             <Plus /> New analysis
@@ -66,7 +66,7 @@ export function AnalysisStudioPage() {
               <EmptyState
                 icon={<FileSearch />}
                 title={search ? 'No matching change requests' : 'No change requests yet'}
-                body={search ? undefined : 'Click New analysis to create a CR from your FRS and analyse it.'}
+                body={search ? undefined : 'Click New analysis to create a CR from your FRS and generate its test scenarios.'}
                 action={
                   search ? undefined : (
                     <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
@@ -88,8 +88,8 @@ export function AiNotConnected() {
     <div className="mb-6 rounded-lg border border-line-strong bg-surface-2 px-4 py-3 text-[13.5px]" data-testid="ai-not-connected" role="status">
       <p className="font-medium text-ink">AI is not connected</p>
       <p className="mt-0.5 text-ink-2">
-        Automatic requirement extraction needs Anthropic credentials. Sign in with <code className="rounded bg-surface px-1">ant auth login</code>, or add{' '}
-        <code className="rounded bg-surface px-1">ANTHROPIC_API_KEY=…</code> to <code className="rounded bg-surface px-1">server/.env</code>, then restart the server. Until then you can preview the extracted text and add, review and export requirements by hand.
+        Generating test scenarios needs Claude. Sign in to Claude Code on this PC (your Claude subscription), or use <code className="rounded bg-surface px-1">ant auth login</code>, or add{' '}
+        <code className="rounded bg-surface px-1">ANTHROPIC_API_KEY=…</code> to <code className="rounded bg-surface px-1">server/.env</code>, then restart the server. Until then you can upload documents and preview the extracted text.
       </p>
     </div>
   );

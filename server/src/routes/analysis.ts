@@ -1,7 +1,7 @@
 import type { AgentTask } from '@prisma/client';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { CR_ANALYST, NOT_CONNECTED_MESSAGE, type AnalysisTaskInput } from '../agents/crAnalyst.js';
+import { NOT_CONNECTED_MESSAGE, type AnalysisTaskInput } from '../agents/documents.js';
 import { SCENARIO_ANALYST } from '../agents/scenarioAnalyst.js';
 import type { AppContext } from '../context.js';
 import { ACTIVE_TASK_STATUSES } from '../domain/constants.js';
@@ -60,7 +60,7 @@ export async function analysisRoutes(app: FastifyInstance, { db, storage, ai, ru
     return reply.send(pic.data);
   });
 
-  // Both CR agents start the same way: checks, a persisted QUEUED task, then the runner.
+  // Agents start the same way: checks, a persisted QUEUED task, then the runner.
   const startTask = (agent: string, taskType: string, label: string) => async (req: FastifyRequest, reply: FastifyReply) => {
     const { id } = parse(IdParams, req.params);
     const body = parse(AnalyseBody, req.body);
@@ -92,7 +92,6 @@ export async function analysisRoutes(app: FastifyInstance, { db, storage, ai, ru
     return shapeTask(task);
   };
 
-  app.post('/api/crs/:id/analyse', startTask(CR_ANALYST, 'REQUIREMENT_EXTRACTION', 'requirement analysis'));
   app.post('/api/crs/:id/generate-scenarios', startTask(SCENARIO_ANALYST, 'TEST_SCENARIO_WORKBOOK', 'test scenario generation'));
 
   app.get('/api/crs/:id/tasks', async (req) => {

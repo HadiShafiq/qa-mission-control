@@ -1,6 +1,9 @@
-import type { ChangeRequest, Project } from '@prisma/client';
+import type { ChangeRequest, PrismaClient, Project } from '@prisma/client';
 import ExcelJS from 'exceljs';
 import type { CheckedWorkbook } from '../agents/scenarioAnalyst.js';
+import { loadCheckedWorkbook } from '../domain/scenarios.js';
+import { audit } from '../lib/audit.js';
+import type { Storage } from '../lib/storage.js';
 
 /**
  * QA Test Scenario workbook, following the user's scenario prompt (sections 10–16).
@@ -65,6 +68,7 @@ function tableSheet(wb: ExcelJS.Workbook, name: string, cols: Col[], rows: (stri
 }
 
 const COVERAGE_LIST = ['Covered', 'Partially Covered', 'Not Covered', 'N/A', 'TBD'];
+const REVIEW_LABEL: Record<string, string> = { PENDING: 'Pending', APPROVED: 'Approved', REJECTED: 'Rejected', CLARIFICATION_REQUIRED: 'Clarification required' };
 const yesNo = (b: boolean) => (b ? 'Yes' : 'No');
 
 export async function buildScenarioWorkbook(opts: { project: Project; cr: ChangeRequest; workbook: CheckedWorkbook; version: number; model: string; documents: string[] }): Promise<Buffer> {
@@ -101,6 +105,8 @@ export async function buildScenarioWorkbook(opts: { project: Project; cr: Change
       { header: 'Priority', width: 9, list: ['High', 'Medium', 'Low'] },
       { header: 'Regression', width: 10, list: ['Yes', 'No'] },
       { header: 'Remarks', width: 30 },
+      { header: 'Review Status', width: 16, list: ['Pending', 'Approved', 'Rejected', 'Clarification required'] },
+      { header: 'Review Comment', width: 28 },
     ],
     w.scenarios.map((s) => [
       s.id,
@@ -124,6 +130,8 @@ export async function buildScenarioWorkbook(opts: { project: Project; cr: Change
       s.priority,
       yesNo(s.regression),
       s.remarks,
+      REVIEW_LABEL[s.reviewStatus ?? 'PENDING'] ?? 'Pending',
+      s.reviewComment ?? '',
     ]),
     { footer },
   );
@@ -362,4 +370,40 @@ export async function validateScenarioWorkbook(data: Buffer, expectedScenarios: 
     if (rows !== expectedScenarios) problems.push(`Expected ${expectedScenarios} scenario rows, found ${rows}`);
   }
   return problems;
+}
+
+/**
+ * Build the workbook from the stored rows (with every edit and review decision),
+ * validate it, and save it as the next version of "<CR> Test Scenarios".
+ */
+export async function saveScenarioExport({ db, storage }: { db: PrismaClient; storage: Storage }, workbookId: string, scope: 'all' | 'approved') {
+  const { record, workbook, documents } = await loadCheckedWorkbook(db, workbookId, scope);
+  const cr = await db.changeRequest.findUniqueOrThrow({ where: { id: record.crId }, include: { project: true } });
+  const name = scope === 'approved' ? `${cr.crNumber} Approved Test Scenarios` : `${cr.crNumber} Test Scenarios`;
+  const latest = await db.generatedArtifact.findFirst({ where: { projectId: cr.projectId, name }, orderBy: { version: 'desc' } });
+  const version = (latest?.version ?? 0) + 1;
+  const fileName = `${name.replace(/\s+/g, '_')}_v${version}.xlsx`;
+  const data = await buildScenarioWorkbook({ project: cr.project, cr, workbook, version, model: `${record.model ?? 'AI'} · scenario workbook v${record.version}`, documents });
+  const problems = await validateScenarioWorkbook(data, workbook.scenarios.length);
+  if (problems.length) throw new Error(`The generated workbook failed validation: ${problems.join('; ')}. Nothing was saved.`);
+
+  const file = await storage.saveBuffer(`projects/${cr.projectId}/crs/${cr.id}/artifacts`, fileName, data);
+  return db.$transaction(async (tx) => {
+    const a = await tx.generatedArtifact.create({
+      data: {
+        projectId: cr.projectId,
+        crId: cr.id,
+        artifactType: 'SCENARIOS_XLSX',
+        name,
+        version,
+        fileName,
+        storageKey: file.key,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        sizeBytes: file.sizeBytes,
+        sha256: file.sha256,
+      },
+    });
+    await audit(tx, { projectId: cr.projectId, entityType: 'GeneratedArtifact', entityId: a.id, action: 'GENERATED', summary: `Exported ${fileName} (${workbook.scenarios.length} test scenarios)` });
+    return a;
+  });
 }

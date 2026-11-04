@@ -132,7 +132,7 @@ export function NewAnalysisDialog({ open, onOpenChange, aiConnected }: { open: b
         const docs = await api.upload<SourceDocument[]>(`/api/crs/${cr.id}/documents`, files);
         if (analyse) {
           setStep('Starting analysis');
-          await api.post<AgentTask>(`/api/crs/${cr.id}/analyse`, { documentIds: docs.map((d) => d.id) });
+          await api.post<AgentTask>(`/api/crs/${cr.id}/generate-scenarios`, { documentIds: docs.map((d) => d.id) });
         }
         return { cr, warning: null as string | null };
       } catch (e) {
@@ -143,7 +143,7 @@ export function NewAnalysisDialog({ open, onOpenChange, aiConnected }: { open: b
       invalidate();
       onOpenChange(false);
       if (warning) toast.error(`${cr.crNumber} was created, but: ${warning}`);
-      else toast.success(analyse ? `${cr.crNumber} created and analysis started` : `${cr.crNumber} created`);
+      else toast.success(analyse ? `${cr.crNumber} created and test scenario generation started` : `${cr.crNumber} created`);
       navigate(`/cr-analysis/${cr.id}`);
     },
     onSettled: () => setStep(''),
@@ -161,14 +161,14 @@ export function NewAnalysisDialog({ open, onOpenChange, aiConnected }: { open: b
       open={open}
       onOpenChange={onOpenChange}
       title="New analysis"
-      description="Create a CR for this FRS, upload it and start the analysis. Requirement IDs use the CR number you enter here (e.g. CR3657-REQ-001)."
+      description="Create a CR for this FRS, upload it and generate its test scenarios. Scenario IDs use the CR number you enter here (e.g. CR3657-TS-001)."
       footer={
         <>
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button variant="primary" type="submit" form="new-analysis-form" loading={run.isPending} disabled={!ready || reading} data-testid="create-analysis">
-            <Play /> {analyse ? 'Create and analyse' : 'Create CR'}
+            <Play /> {analyse ? 'Create and generate scenarios' : 'Create CR'}
           </Button>
         </>
       }
@@ -237,7 +237,7 @@ export function NewAnalysisDialog({ open, onOpenChange, aiConnected }: { open: b
         <label className="flex items-start gap-2 text-[13.5px]">
           <input type="checkbox" className="mt-0.5 accent-[var(--signal)]" checked={analyse} onChange={(e) => setAnalyse(e.target.checked)} disabled={!aiConnected} />
           <span>
-            Start the analysis straight away
+            Generate test scenarios straight away
             <span className="block text-[12.5px] text-ink-3">
               {aiConnected ? 'All uploaded documents are analysed. Untick to choose documents later on the CR page.' : 'AI is not connected, so the CR is only created and the documents uploaded.'}
             </span>

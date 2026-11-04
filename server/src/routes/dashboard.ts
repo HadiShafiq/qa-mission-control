@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { OPEN_DEFECT_STATUSES } from '../domain/constants.js';
+import { latestWorkbookIds } from '../domain/scenarios.js';
 import { parseAudit } from '../lib/audit.js';
 
 /**
@@ -13,19 +14,21 @@ import { parseAudit } from '../lib/audit.js';
  *   executionProgress   = test cases whose latest run is PASSED|FAILED|BLOCKED|NOT_APPLICABLE / test cases
  *   evidenceCompletion  = test cases with ≥1 evidence record / test cases
  *   passed/failed/blocked = test cases whose LATEST run has that status (retests don't double-count)
- *   pendingApprovals    = requirements awaiting review (PENDING or CLARIFICATION_REQUIRED) + pending Approval rows
+ *   scenarios / approved / clarification = rows in each CR's NEWEST scenario workbook
+ *   pendingApprovals    = those scenarios awaiting review (PENDING or CLARIFICATION_REQUIRED) + pending Approval rows
  * Scope: non-archived CRs inside non-archived projects.
  */
 export async function dashboardRoutes(app: FastifyInstance, { db, ai }: AppContext) {
   app.get('/api/dashboard/summary', async () => {
     const activeCr = { archivedAt: null, project: { archivedAt: null } };
     const tcScope = { scenario: { changeRequest: activeCr } };
+    const activeCrIds = (await db.changeRequest.findMany({ where: activeCr, select: { id: true } })).map((c) => c.id);
+    const scenarioScope = { workbookId: { in: [...(await latestWorkbookIds(db, activeCrIds)).values()] } };
 
     const [
       totalProjects,
       totalCrs,
-      requirements,
-      uncoveredRequirements,
+      clarificationScenarios,
       scenarios,
       approvedScenarios,
       testCases,
@@ -41,17 +44,16 @@ export async function dashboardRoutes(app: FastifyInstance, { db, ai }: AppConte
     ] = await Promise.all([
       db.project.count({ where: { archivedAt: null } }),
       db.changeRequest.count({ where: activeCr }),
-      db.requirement.count({ where: { changeRequest: activeCr } }),
-      db.requirement.count({ where: { changeRequest: activeCr, reviewStatus: 'APPROVED', scenarioLinks: { none: {} } } }),
-      db.testScenario.count({ where: { changeRequest: activeCr } }),
-      db.testScenario.count({ where: { changeRequest: activeCr, reviewStatus: 'APPROVED' } }),
+      db.testScenario.count({ where: { ...scenarioScope, reviewStatus: 'CLARIFICATION_REQUIRED' } }),
+      db.testScenario.count({ where: scenarioScope }),
+      db.testScenario.count({ where: { ...scenarioScope, reviewStatus: 'APPROVED' } }),
       db.testCase.count({ where: tcScope }),
       db.testCase.count({ where: { ...tcScope, automationScripts: { some: {} } } }),
       db.testCase.count({ where: { ...tcScope, evidence: { some: {} } } }),
       db.defect.count({ where: { project: { archivedAt: null }, status: { in: [...OPEN_DEFECT_STATUSES] } } }),
       Promise.all([
         db.approval.count({ where: { status: 'PENDING' } }),
-        db.requirement.count({ where: { changeRequest: activeCr, reviewStatus: { in: ['PENDING', 'CLARIFICATION_REQUIRED'] } } }),
+        db.testScenario.count({ where: { ...scenarioScope, reviewStatus: { in: ['PENDING', 'CLARIFICATION_REQUIRED'] } } }),
       ]).then(([a, r]) => a + r),
       db.executionRun.findMany({
         where: { testCase: tcScope },
@@ -84,9 +86,8 @@ export async function dashboardRoutes(app: FastifyInstance, { db, ai }: AppConte
         totalProjects,
         totalCrs,
         sourceDocuments: documents,
-        requirements,
-        uncoveredRequirements,
         scenarios,
+        clarificationScenarios,
         approvedScenarios,
         testCases,
         passed: byStatus.PASSED ?? 0,

@@ -40,19 +40,23 @@ server/src/
   app.ts               buildApp(): plugins, error handler, routes, static UI in production
   config.ts            env loading + zod validation (fails fast with clear messages)
   context.ts           { db, storage, config, ai, runner } passed to routes
-  domain/constants.ts  allowed status values
-  domain/requirements.ts  requirement codes, revision snapshots
+  domain/constants.ts  allowed status values, scenario types
+  domain/scenarios.ts  scenario rows ↔ workbook, revision snapshots, newest-workbook helper
   agents/runner.ts     in-process task runner (one task at a time, cancel, restart recovery)
-  agents/crAnalyst.ts  CR Analyst: prompt, output schema, source verification, persistence
+  agents/documents.ts  load task documents, lay them out for the model, verify source quotes
+  agents/scenarioPrompt.ts  the user's QA scenario prompt (verbatim) + output note
+  agents/scenarioAnalyst.ts  output schema, application checks, saving a workbook run
   lib/ai.ts            Anthropic client wrapper (budget, retries, refusal/truncation handling)
-  lib/extract.ts       PDF / DOCX / XLSX text extraction with references
-  exports/requirementsWorkbook.ts  requirements XLSX builder + validator
+  lib/extract.ts       PDF / DOCX / XLSX text + pictures, with references
+  lib/claudeCode.ts    Claude Code CLI engine (user's subscription), locked down
+  lib/crInfo.ts        CR number / title / version suggestions from a document
+  exports/scenarioWorkbook.ts  QA test scenario workbook builder, validator, export
   lib/storage.ts       safe file storage, upload validation, Content-Disposition
   lib/audit.ts         audit log writer + field diff
   lib/validate.ts      zod helpers
   lib/errors.ts        AppError
   routes/              system, projects (+ environments), changeRequests, documents, dashboard,
-                       analysis (extraction preview, analyse, tasks), requirements, artifacts
+                       analysis (extraction preview, generate-scenarios, tasks), scenarios, artifacts
 ```
 
 ## API
@@ -81,14 +85,15 @@ server/src/
 | `GET /api/activity` | Recent audit entries |
 | `POST /api/settings/ai/test` | One cheap API call (model lookup) to prove the key and model work |
 | `GET /api/crs/:id/extraction` | Extracted text of each active document with the reference labels the analyst cites (works without AI) |
-| `POST /api/crs/:id/analyse` | Queue a CR Analyst task (`documentIds` optional, default all active documents). 409 `AI_NOT_CONNECTED` without a key |
+| `POST /api/crs/:id/generate-scenarios` | Queue a QA test scenario run (`documentIds` optional). 409 `AI_NOT_CONNECTED` without AI |
+| `GET /api/crs/:id/scenario-workbooks` | Every run (workbook version) with scenario / approved / pending counts |
+| `GET /api/scenario-workbooks/:id` | The other sheets: dimensions, decision tables, coverage, clarifications, checks |
+| `GET /api/crs/:id/scenarios` | Scenarios of the newest (or `workbookId`) run; filters `reviewStatus`, `type`, `search` |
+| `POST /api/scenario-workbooks/:id/scenarios` | Add a scenario by hand |
+| `GET/PATCH /api/scenarios/:id`, `GET /api/scenarios/:id/revisions` | Detail / edit (new revision) / history |
+| `POST /api/scenarios/:id/review`, `POST /api/scenario-workbooks/:id/review` | Approve / reject / clarification / back to pending, one or many |
+| `POST /api/scenario-workbooks/:id/export` | `{ scope: all \| approved }` → Excel rebuilt from the stored rows, new artifact version |
 | `GET /api/crs/:id/tasks`, `GET /api/tasks/:id`, `POST /api/tasks/:id/cancel` | Task progress, result and error; cancel a queued or running task |
-| `GET/POST /api/crs/:id/requirements` | List (filters `search`, `reviewStatus`, `classification`) / add manually |
-| `GET/PATCH /api/requirements/:id` | Detail / edit (new revision; approved items go back to pending) |
-| `GET /api/requirements/:id/revisions` | All revision snapshots, newest first |
-| `POST /api/requirements/:id/review` | `{ status, comment }`: approve, reject, clarification, back to pending |
-| `POST /api/crs/:id/requirements/review` | Bulk review `{ ids, status }` |
-| `POST /api/crs/:id/exports/requirements` | `{ scope: all \| approved }` → validated XLSX saved as a new GeneratedArtifact version |
 | `GET /api/crs/:id/artifacts`, `GET /api/artifacts/:id/download` | List / download generated files |
 
 ## Data model
@@ -121,24 +126,27 @@ Key constraints:
 
 Entities from the master prompt not yet created (added in their phase): ScenarioRevision, TemplateMapping (currently `Template.mapping` JSON), ScriptVersion, ExecutionStep, AgentRun, TestDataSet.
 
-## Data flow: CR analysis (Phase 2)
+## Data flow: QA test scenarios (the one CR analysis function)
 
-1. `POST /api/crs/:id/analyse` checks that AI is connected, the CR is writable, it has active documents and no analysis is already running. It creates an `AgentTask` (QUEUED) with an audit entry and hands the id to the runner.
-2. The runner atomically claims the task (QUEUED → RUNNING) and calls the CR Analyst with an abort signal and a progress callback. Progress is stored on the task, and the UI polls it every 1.5 s.
-3. Each document is read from storage and extracted. PDF → one segment per page (`Page 3`). DOCX → one per heading section (`Section "2.1 …"`), tables as rows. XLSX → one per non-empty row with cell labels (`Sheet1!A5:F5`, `A5=…`). Images → sent as image blocks. Scanned, password-protected or unreadable files produce warnings. If nothing is extractable the task fails without calling the model.
-4. The prompt wraps documents in `<documents>` / `<segment ref="…">` tags. The system prompt states the content is untrusted data and that embedded instructions must not be followed. Existing requirements are listed so a re-run does not duplicate them.
-5. The AI client counts input tokens first and refuses anything over `AI_MAX_INPUT_TOKENS`. It then streams one request: structured output (JSON schema of `AnalysisSchema`), adaptive thinking, `AI_EFFORT`, and `fallbacks: "default"` on Opus/Sonnet 5.x. A `refusal`, `max_tokens` stop, invalid JSON or schema mismatch is an error, and **nothing is saved**.
-6. Source verification: each `quote` is normalised and searched for in the cited segment, then the rest of that document, then the other documents. If found, the stored reference is where it really is (a wrong page from the model is corrected) and `sourceVerified = true`. Missing quotes, quotes under 8 characters and quotes that are not found stay **unverified**, and are flagged in the UI and the workbook.
-7. In one transaction: requirements are created with sequential codes (`CR30045-REQ-001`, never reused), revision 1 and a CREATED audit entry each, and the CR moves to ANALYSED if it was NOT_STARTED or IN_PROGRESS. The task output stores the summary, impacted modules, regression impact, counts and per-document warnings.
-8. On server start, tasks left QUEUED or RUNNING by a previous process are marked FAILED with the reason.
+1. The user uploads CR / FRS documents (or uses **New analysis**, which reads the CR number / title / version from the document or filename), then clicks **Generate test scenarios** and ticks the documents to send.
+2. `POST /api/crs/:id/generate-scenarios` checks that AI is connected, the CR is writable, the documents exist and no run is active, then creates a QUEUED `AgentTask`. The runner claims it atomically.
+3. Documents are extracted (PDF pages, Word sections / tables / rows, Excel rows, pictures marked `[Image N]`) and laid out as untrusted `<documents>` with each picture as a labelled image block (`agents/documents.ts`).
+4. The model receives the user's QA prompt **word for word** (`agents/scenarioPrompt.ts`) plus a short output note, through the configured engine: Claude Code CLI on the user's subscription (stream-json with pictures, no tools), or the Anthropic API. Output must match `ScenarioWorkbookSchema`; a refusal, truncation or mismatch saves nothing.
+5. Application checks (`checkScenarioAnswer`): final IDs `<CR>-TS-001…`, every cross-reference remapped; an unknown scenario reference makes the combination **TBD** or the coverage row **Not Covered**; unreferenced scenarios are listed; every quote is verified against the document text (pictures can't be).
+6. In one transaction: a `ScenarioWorkbook` (version n per CR, the other sheets as JSON) and one `TestScenario` row per scenario (revision 1, `ScenarioRevision` snapshot, audit entry). The CR moves to ANALYSED if it was NOT_STARTED / IN_PROGRESS.
+7. The Excel is built from the **stored rows** and saved as a versioned `GeneratedArtifact`. Later exports rebuild it from the rows again, so they include every edit and review decision; "approved only" keeps approved rows and recalculates the summary.
+8. Older runs are kept. Lists, CR counts and the dashboard use each CR's newest workbook.
 
-## Requirement review rules
+## Scenario review rules
 
-- Every edit and every review decision increments `revision`, writes a `RequirementRevision` snapshot and an audit entry with field-level changes. Nothing is overwritten or deleted.
-- Editing an APPROVED requirement sets it back to PENDING (recorded as a change).
-- Editing the source reference by hand clears `sourceVerified`.
-- AI items classified CLARIFICATION_REQUIRED start in review status CLARIFICATION_REQUIRED.
-- Archived CRs or projects: requirements are read-only and analysis can't start. Export still works.
+- Every edit and review decision increments `revision`, writes a `ScenarioRevision` snapshot and an audit entry with field-level changes. Nothing is overwritten or deleted.
+- Editing an APPROVED scenario sets it back to PENDING; hand-editing the source reference clears `sourceVerified`.
+- Scenarios can be added by hand (origin MANUAL, next ID in that workbook).
+- Archived CRs / projects: scenarios are read-only and generation can't start; export still works.
+
+## Removed on 2026-11-04
+
+The separate requirement extraction (CR Analyst prompt), the Requirements table with approve / reject, and the requirements workbook were removed at the user's request; the QA test scenario workbook covers them (Requirement Coverage and Clarification Required sheets). The `Requirement` / `RequirementRevision` tables and their existing rows are kept untouched (no data deleted) but are no longer used. The code is in git commit `ed92870` if it is ever needed again.
 
 ## Data flow: document upload
 
@@ -156,8 +164,6 @@ Scope: non-archived CRs in non-archived projects. A percentage is `null` (shown 
 |---|---|
 | Total projects | count of projects where `archivedAt` is null |
 | Total CRs | count of in-scope CRs |
-| Requirements | count of requirements in in-scope CRs |
-| Requirements without scenarios | approved requirements with no `ScenarioRequirement` link |
 | Approved scenarios | scenarios with `reviewStatus = APPROVED` |
 | Passed / Failed / Blocked | test cases whose **latest** `ExecutionRun` has that status (retests don't double count) |
 | Not run | test cases with no execution run |
@@ -165,14 +171,14 @@ Scope: non-archived CRs in non-archived projects. A percentage is `null` (shown 
 | Execution progress | test cases whose latest run is PASSED, FAILED, BLOCKED or NOT_APPLICABLE ÷ test cases |
 | Evidence completion | test cases with ≥ 1 evidence record ÷ test cases |
 | Open defects | defects with status OPEN, IN_PROGRESS, RETEST or REOPENED |
-| Pending approvals | requirements in in-scope CRs with review status PENDING or CLARIFICATION_REQUIRED, plus `Approval` rows with status PENDING |
+| Test scenarios / approved / need clarification | rows in each in-scope CR's **newest** scenario workbook |
+| Pending approvals | those scenarios with review status PENDING or CLARIFICATION_REQUIRED, plus `Approval` rows with status PENDING |
 
 ## Agent responsibilities
 
 | Agent | Phase | Input → output | Human checkpoint |
 |---|---|---|---|
-| CR Analyst ✅ | 2 | Source documents → requirements with verified source references, classification (explicit / inferred / assumption / clarification), risk and rationale, plus CR summary, impacted modules and regression impact | Approve, reject, mark clarification or edit each requirement (one at a time or in bulk) |
-| Scenario Generator + completeness check | 3 | Approved requirements → scenarios, plus a second validation pass | Approve scenarios before test cases |
+| QA Scenario Analyst ✅ | 2 | CR / FRS documents (text + pictures) → the user's QA test scenario workbook: dimensions, scenarios, decision tables, requirement / WIP / enhancement coverage, clarifications, self-review | Approve, reject, mark clarification or edit each scenario (one at a time or in bulk); export |
 | Test Case Generator | 4 | Approved scenarios → steps and expected results, SITCR / UAT in your template | Edit individual test cases |
 | Automation Engineer | 5 | Approved test cases → Playwright TS | Approve before running against SIT/UAT |
 | Self-Healing Engineer | 6 | Failure artefacts → classified diagnosis and minimal repair candidate | Approve significant repairs |

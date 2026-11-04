@@ -6,7 +6,6 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { Prisma, PrismaClient } from '@prisma/client';
 import Fastify from 'fastify';
-import { CR_ANALYST, crAnalystHandler } from './agents/crAnalyst.js';
 import { SCENARIO_ANALYST, scenarioAnalystHandler } from './agents/scenarioAnalyst.js';
 import { TaskRunner } from './agents/runner.js';
 import type { AppConfig } from './config.js';
@@ -20,7 +19,7 @@ import { changeRequestRoutes } from './routes/changeRequests.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { documentRoutes } from './routes/documents.js';
 import { projectRoutes } from './routes/projects.js';
-import { requirementRoutes } from './routes/requirements.js';
+import { scenarioRoutes } from './routes/scenarios.js';
 import { systemRoutes } from './routes/system.js';
 
 export type BuildOptions = {
@@ -49,7 +48,6 @@ export async function buildApp(config: AppConfig, db = new PrismaClient({ dataso
   const ai = opts.ai !== undefined ? opts.ai : await createAiClient(config);
   const runner = new TaskRunner(db, app.log);
   const ctx: AppContext = { db, storage, config, ai, runner };
-  runner.register(CR_ANALYST, crAnalystHandler(ctx));
   runner.register(SCENARIO_ANALYST, scenarioAnalystHandler(ctx));
   app.decorate('qamc', ctx); // server-side only (tests use it to wait for the runner)
   const interrupted = await runner.recover();
@@ -84,7 +82,7 @@ export async function buildApp(config: AppConfig, db = new PrismaClient({ dataso
     await documentRoutes(api, ctx);
     await dashboardRoutes(api, ctx);
     await analysisRoutes(api, ctx);
-    await requirementRoutes(api, ctx);
+    await scenarioRoutes(api, ctx);
     await artifactRoutes(api, ctx);
   });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { AnalysisSchema } from '../src/agents/crAnalyst.js';
+import { ScenarioWorkbookSchema } from '../src/agents/scenarioAnalyst.js';
 import { loadConfig } from '../src/config.js';
 import { AiError, createAiClient } from '../src/lib/ai.js';
 import { ClaudeCodeAiClient, type ClaudeRunner } from '../src/lib/claudeCode.js';
@@ -54,13 +54,14 @@ describe('Claude Code engine (subscription, no API credit)', () => {
     expect(args.join(' ')).not.toContain('DOCUMENT TEXT');
   });
 
-  it('accepts the full requirement-analysis schema', async () => {
-    const { run, calls } = fakeCli(ok({ crSummary: 's', impactedModules: [], regressionImpact: [], requirements: [] }));
+  it('accepts the full scenario workbook schema', async () => {
+    const empty = { dimensions: [], wip: { applicable: false, statement: '' }, enhancement: { applicable: false, statement: '' }, scenarios: [], decisionTables: [], requirementCoverage: [], clarifications: [], wipCoverage: [], enhancementCoverage: [], selfReview: [] };
+    const { run, calls } = fakeCli(ok(empty));
     const ai = new ClaudeCodeAiClient(cfg(), '2.1.316', run);
-    const r = await ai.generate({ system: 's', content: [{ type: 'text', text: 'x' }], schema: AnalysisSchema });
-    expect(r.data.requirements).toEqual([]);
+    const r = await ai.generate({ system: 's', content: [{ type: 'text', text: 'x' }], schema: ScenarioWorkbookSchema });
+    expect(r.data.scenarios).toEqual([]);
     const schema = JSON.parse(calls[0].args[calls[0].args.indexOf('--json-schema') + 1]);
-    expect(Object.keys(schema.properties)).toEqual(['crSummary', 'impactedModules', 'regressionImpact', 'requirements']);
+    expect(Object.keys(schema.properties)).toEqual(Object.keys(empty));
   });
 
   it.each([

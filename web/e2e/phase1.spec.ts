@@ -144,9 +144,9 @@ test('archive and restore a project without losing data', async ({ page }) => {
 
 test('unbuilt modules say so honestly', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('link', { name: /Test Scenario Studio/ }).click();
+  await page.getByRole('link', { name: /Test Case Studio/ }).click();
   await expect(page.getByText("This module isn't built yet.")).toBeVisible();
-  await expect(page.getByText('Planned for phase 3')).toBeVisible();
+  await expect(page.getByText('Planned for phase 4')).toBeVisible();
 });
 
 test('dark mode toggles and persists across reloads', async ({ page }) => {

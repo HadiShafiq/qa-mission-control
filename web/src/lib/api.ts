@@ -137,9 +137,8 @@ export type DashboardSummary = {
     totalProjects: number;
     totalCrs: number;
     sourceDocuments: number;
-    requirements: number;
-    uncoveredRequirements: number;
     scenarios: number;
+    clarificationScenarios: number;
     approvedScenarios: number;
     testCases: number;
     passed: number;
@@ -174,39 +173,65 @@ export type UploadRules = { allowedExtensions: string[]; maxUploadBytes: number 
 // ───────── Phase 2: CR analysis ─────────
 
 export type ReviewStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CLARIFICATION_REQUIRED';
-export type Classification = 'EXPLICIT' | 'INFERRED' | 'ASSUMPTION' | 'CLARIFICATION_REQUIRED';
-export type RequirementType = 'FUNCTIONAL' | 'NON_FUNCTIONAL';
-export type Risk = 'LOW' | 'MEDIUM' | 'HIGH';
+export const SCENARIO_TYPES = [
+  'Positive',
+  'Negative',
+  'Main Flow',
+  'Alternative Flow',
+  'Business Rule',
+  'Validation',
+  'Boundary',
+  'Status / Workflow',
+  'Role / Access',
+  'Enhancement',
+  'WIP',
+  'Non-WIP',
+  'Data Behaviour',
+  'Integration',
+  'Regression',
+  'Exception / Error',
+] as const;
+export type ScenarioType = (typeof SCENARIO_TYPES)[number];
+export type Priority = 'HIGH' | 'MEDIUM' | 'LOW';
 
-export type Requirement = {
+export type TestScenario = {
   id: string;
   crId: string;
-  requirementCode: string;
-  module: string | null;
-  feature: string | null;
-  description: string;
-  requirementType: RequirementType;
-  classification: Classification;
-  businessRule: string | null;
+  workbookId: string | null;
+  scenarioCode: string;
+  title: string;
+  description: string | null;
+  testType: string | null;
+  priority: Priority;
   userRole: string | null;
+  reviewStatus: ReviewStatus;
+  requirementRef: string | null;
+  module: string | null;
+  functionScreen: string | null;
+  enhancementState: string | null;
+  transactionState: string | null;
+  workflowStatus: string | null;
+  businessCondition: string | null;
+  existingValue: string | null;
+  actionChange: string | null;
+  confirmation: string | null;
+  testData: string | null;
+  expectedResult: string | null;
+  regression: boolean;
+  remarks: string | null;
   sourceReference: string | null;
-  sourceDocumentId: string | null;
   sourceQuote: string | null;
   sourceVerified: boolean;
-  rationale: string | null;
   origin: 'AI' | 'MANUAL';
-  agentTaskId: string | null;
   revision: number;
   reviewComment: string | null;
-  risk: Risk;
-  reviewStatus: ReviewStatus;
   createdAt: string;
   updatedAt: string;
 };
 
-export type RequirementRevision = {
+export type ScenarioRevision = {
   id: string;
-  requirementId: string;
+  scenarioId: string;
   revision: number;
   snapshot: Record<string, unknown>;
   changeNote: string | null;
@@ -214,17 +239,9 @@ export type RequirementRevision = {
   createdAt: string;
 };
 
-export type TaskStatus = 'QUEUED' | 'RUNNING' | 'AWAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+export type WorkbookVersion = { id: string; version: number; model: string | null; createdAt: string; scenarioCount: number; approvedCount: number; pendingCount: number };
 
-export type AnalysisOutput = {
-  crSummary: string;
-  impactedModules: string[];
-  regressionImpact: string[];
-  requirementCount: number;
-  verifiedCount: number;
-  unverifiedCount: number;
-  documents: { id: string; name: string; version: number; segments: number; warnings: string[] }[];
-};
+export type TaskStatus = 'QUEUED' | 'RUNNING' | 'AWAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 
 export type AgentTask = {
   id: string;
@@ -237,7 +254,7 @@ export type AgentTask = {
   progressMessage: string | null;
   model: string | null;
   input: { documentIds: string[] } | null;
-  output: AnalysisOutput | null;
+  output: Record<string, unknown> | null;
   usage: { inputTokens: number; outputTokens: number } | null;
   error: string | null;
   createdAt: string;

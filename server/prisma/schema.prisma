@@ -116,6 +116,7 @@ model ChangeRequest {
   artifacts    GeneratedArtifact[]
   defects      Defect[]
   agentTasks   AgentTask[]
+  scenarioWorkbooks ScenarioWorkbook[]
 
   @@unique([projectId, crNumber])
   @@index([projectId, archivedAt])
@@ -230,25 +231,93 @@ model RequirementRevision {
   @@unique([requirementId, revision])
 }
 
+// One generated QA test scenario workbook (one run of the scenario analyst).
+// The sheets other than Test Scenarios are stored as JSON; scenarios are rows.
+model ScenarioWorkbook {
+  id                  String   @id @default(cuid())
+  crId                String
+  agentTaskId         String?
+  version             Int // 1, 2, … per CR
+  model               String?
+  documents           String // JSON: source documents used
+  dimensions          String // JSON
+  wip                 String // JSON { applicable, statement }
+  enhancement         String // JSON { applicable, statement }
+  decisionTables      String // JSON
+  requirementCoverage String // JSON
+  wipCoverage         String // JSON
+  enhancementCoverage String // JSON
+  clarifications      String // JSON
+  selfReview          String // JSON
+  checks              String // JSON: problems found by the application's checks
+  createdAt           DateTime @default(now())
+
+  changeRequest ChangeRequest  @relation(fields: [crId], references: [id], onDelete: Cascade)
+  scenarios     TestScenario[]
+
+  @@unique([crId, version])
+}
+
 model TestScenario {
   id                    String   @id @default(cuid())
   crId                  String
+  workbookId            String?
   scenarioCode          String // e.g. CR30045-TS-001
   title                 String
   description           String?
-  testType              String?
-  priority              String   @default("MEDIUM")
+  testType              String? // comma-separated scenario types
+  priority              String   @default("MEDIUM") // HIGH | MEDIUM | LOW
   userRole              String?
   automationFeasibility String?
-  reviewStatus          String   @default("PENDING")
+  reviewStatus          String   @default("PENDING") // PENDING | APPROVED | REJECTED | CLARIFICATION_REQUIRED
+  // Columns of the user's QA scenario prompt (section 10)
+  requirementRef        String?
+  module                String?
+  functionScreen        String?
+  enhancementState      String?
+  transactionState      String?
+  workflowStatus        String?
+  businessCondition     String?
+  existingValue         String?
+  actionChange          String?
+  confirmation          String?
+  testData              String?
+  expectedResult        String?
+  regression            Boolean  @default(false)
+  remarks               String?
+  // Traceability and review
+  sourceReference       String?
+  sourceQuote           String?
+  sourceVerified        Boolean  @default(false)
+  origin                String   @default("AI") // AI | MANUAL
+  revision              Int      @default(1)
+  reviewComment         String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
   changeRequest    ChangeRequest         @relation(fields: [crId], references: [id], onDelete: Cascade)
+  workbook         ScenarioWorkbook?     @relation(fields: [workbookId], references: [id], onDelete: Cascade)
   requirementLinks ScenarioRequirement[]
   testCases        TestCase[]
+  revisions        ScenarioRevision[]
 
-  @@unique([crId, scenarioCode])
+  // Codes repeat across workbook versions (each run numbers from TS-001).
+  @@unique([workbookId, scenarioCode])
+  @@index([crId, reviewStatus])
+}
+
+model ScenarioRevision {
+  id         String   @id @default(cuid())
+  scenarioId String
+  revision   Int
+  snapshot   String // JSON
+  changeNote String?
+  createdBy  String   @default("local-user")
+  createdAt  DateTime @default(now())
+
+  scenario TestScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+
+  @@unique([scenarioId, revision])
 }
 
 // One requirement → many scenarios, one scenario → many requirements.

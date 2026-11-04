@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import type { AppContext } from '../context.js';
 import { ANALYSIS_STATUSES, PROGRESS_STATUSES } from '../domain/constants.js';
+import { latestWorkbookIds } from '../domain/scenarios.js';
 import { audit, diff, parseAudit } from '../lib/audit.js';
 import { conflict, notFound } from '../lib/errors.js';
 import { IdParams, archivedFilter, optionalText, parse, requiredText } from '../lib/validate.js';
@@ -54,6 +55,14 @@ function shape<T extends CrWithCount>({ _count, ...cr }: T) {
 }
 
 export async function changeRequestRoutes(app: FastifyInstance, { db }: AppContext) {
+  /** scenarioCount = scenarios in each CR's newest workbook (older runs are kept but not counted). */
+  async function withScenarioCounts<T extends { id: string; scenarioCount: number }>(crs: T[]) {
+    const latest = await latestWorkbookIds(db, crs.map((c) => c.id));
+    const ids = [...latest.values()];
+    const counts = ids.length ? await db.testScenario.groupBy({ by: ['workbookId'], where: { workbookId: { in: ids } }, _count: true }) : [];
+    return crs.map((c) => ({ ...c, scenarioCount: counts.find((x) => x.workbookId === latest.get(c.id))?._count ?? 0 }));
+  }
+
   async function getCr(id: string) {
     const cr = await db.changeRequest.findUnique({ where: { id }, include: { project: true } });
     if (!cr) throw notFound('Change request');
@@ -72,7 +81,7 @@ export async function changeRequestRoutes(app: FastifyInstance, { db }: AppConte
       orderBy: { updatedAt: 'desc' },
       include: crInclude,
     });
-    return crs.map(shape);
+    return withScenarioCounts(crs.map(shape));
   });
 
   app.post('/api/projects/:id/crs', async (req, reply) => {
@@ -98,7 +107,7 @@ export async function changeRequestRoutes(app: FastifyInstance, { db }: AppConte
     const { id } = parse(IdParams, req.params);
     const cr = await db.changeRequest.findUnique({ where: { id }, include: crInclude });
     if (!cr) throw notFound('Change request');
-    return shape(cr);
+    return (await withScenarioCounts([shape(cr)]))[0];
   });
 
   app.patch('/api/crs/:id', async (req) => {
@@ -148,11 +157,13 @@ export async function changeRequestRoutes(app: FastifyInstance, { db }: AppConte
     const { id } = parse(IdParams, req.params);
     await getCr(id);
     const ids = async (rows: Promise<{ id: string }[]>) => (await rows).map((r) => r.id);
-    const [docIds, reqIds, taskIds, artifactIds] = await Promise.all([
+    const [docIds, reqIds, taskIds, artifactIds, scenarioIds, workbookIds] = await Promise.all([
       ids(db.sourceDocument.findMany({ where: { crId: id }, select: { id: true } })),
       ids(db.requirement.findMany({ where: { crId: id }, select: { id: true } })),
       ids(db.agentTask.findMany({ where: { crId: id }, select: { id: true } })),
       ids(db.generatedArtifact.findMany({ where: { crId: id }, select: { id: true } })),
+      ids(db.testScenario.findMany({ where: { crId: id }, select: { id: true } })),
+      ids(db.scenarioWorkbook.findMany({ where: { crId: id }, select: { id: true } })),
     ]);
     const rows = await db.auditLog.findMany({
       where: {
@@ -162,10 +173,12 @@ export async function changeRequestRoutes(app: FastifyInstance, { db }: AppConte
           ...(reqIds.length ? [{ entityType: 'Requirement', entityId: { in: reqIds } }] : []),
           ...(taskIds.length ? [{ entityType: 'AgentTask', entityId: { in: taskIds } }] : []),
           ...(artifactIds.length ? [{ entityType: 'GeneratedArtifact', entityId: { in: artifactIds } }] : []),
+          ...(scenarioIds.length ? [{ entityType: 'TestScenario', entityId: { in: scenarioIds } }] : []),
+          ...(workbookIds.length ? [{ entityType: 'ScenarioWorkbook', entityId: { in: workbookIds } }] : []),
         ],
       },
       orderBy: { createdAt: 'desc' },
-      take: 200,
+      take: 300,
     });
     return rows.map(parseAudit);
   });

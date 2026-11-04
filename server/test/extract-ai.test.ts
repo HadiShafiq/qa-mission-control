@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { AnalysisSchema, resolveSource, type AnalysedDocument, type ExtractedRequirement } from '../src/agents/crAnalyst.js';
+import { resolveSource, type AnalysedDocument, type SourceClaim } from '../src/agents/documents.js';
+import { ScenarioWorkbookSchema } from '../src/agents/scenarioAnalyst.js';
 import { loadConfig } from '../src/config.js';
 import { AiError, AnthropicAiClient, createAiClient } from '../src/lib/ai.js';
 import { extractDocument } from '../src/lib/extract.js';
@@ -75,21 +76,7 @@ describe('source verification', () => {
       ({ doc: { id: name, originalName: name, version: 1, fileType } as AnalysedDocument['doc'], extraction }) as AnalysedDocument;
     return [mk('spec.pdf', 'PDF', pdf), mk('rules.xlsx', 'XLSX', xlsx)];
   })();
-  const item = (over: Partial<ExtractedRequirement>): ExtractedRequirement => ({
-    documentIndex: 1,
-    location: 'Page 2',
-    quote: null,
-    module: null,
-    feature: null,
-    description: 'x',
-    requirementType: 'FUNCTIONAL',
-    classification: 'EXPLICIT',
-    businessRule: null,
-    userRole: null,
-    risk: 'MEDIUM',
-    rationale: 'r',
-    ...over,
-  });
+  const item = (over: Partial<SourceClaim>): SourceClaim => ({ documentIndex: 1, location: 'Page 2', quote: null, ...over });
 
   it('verifies a quote at the cited page', async () => {
     const r = resolveSource(item({ quote: 'supervisor approves applications over RM 5000' }), await docs);
@@ -159,6 +146,18 @@ function fakeFetch(handler: (url: string, body: Record<string, unknown>) => Resp
 
 const cfg = (over: Record<string, string> = {}) => loadConfig({ NODE_ENV: 'test', DATABASE_URL: 'file:./x.db', ANTHROPIC_API_KEY: 'sk-test-not-real', ANTHROPIC_MODEL: 'claude-opus-5-5', AI_PROVIDER: 'anthropic-api', AI_EFFORT: 'high', AI_MAX_OUTPUT_TOKENS: '64000', AI_MAX_RETRIES: '0', ...over });
 const Small = z.object({ answer: z.string() });
+const EMPTY_WORKBOOK = {
+  dimensions: [],
+  wip: { applicable: false, statement: '' },
+  enhancement: { applicable: false, statement: '' },
+  scenarios: [],
+  decisionTables: [],
+  requirementCoverage: [],
+  clarifications: [],
+  wipCoverage: [],
+  enhancementCoverage: [],
+  selfReview: [],
+};
 
 describe('Anthropic client', () => {
   it('is not created without an API key or a login profile', async () => {
@@ -229,14 +228,14 @@ describe('Anthropic client', () => {
     await expect(ai.ping()).rejects.toMatchObject({ code: 'AUTH', message: expect.stringMatching(/ANTHROPIC_API_KEY/) });
   });
 
-  it('the analysis schema is accepted by structured outputs conversion', async () => {
+  it('the scenario workbook schema is accepted by structured outputs conversion', async () => {
     const { f, requests } = fakeFetch((url) =>
-      url.includes('count_tokens') ? Response.json({ input_tokens: 10 }) : streamOf(JSON.stringify({ crSummary: 's', impactedModules: [], regressionImpact: [], requirements: [] })),
+      url.includes('count_tokens') ? Response.json({ input_tokens: 10 }) : streamOf(JSON.stringify(EMPTY_WORKBOOK)),
     );
     const ai = new AnthropicAiClient(cfg(), { fetch: f });
-    const r = await ai.generate({ system: 's', content: [{ type: 'text', text: 'x' }], schema: AnalysisSchema });
-    expect(r.data.requirements).toEqual([]);
+    const r = await ai.generate({ system: 's', content: [{ type: 'text', text: 'x' }], schema: ScenarioWorkbookSchema });
+    expect(r.data.scenarios).toEqual([]);
     const schema = (requests.at(-1)!.body.output_config as { format: { schema: { properties: Record<string, unknown> } } }).format.schema;
-    expect(Object.keys(schema.properties)).toEqual(['crSummary', 'impactedModules', 'regressionImpact', 'requirements']);
+    expect(Object.keys(schema.properties)).toEqual(Object.keys(EMPTY_WORKBOOK));
   });
 });

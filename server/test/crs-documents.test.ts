@@ -156,7 +156,7 @@ describe('dashboard', () => {
     const s = (await get('/api/dashboard/summary')).json();
     expect(s.counts.totalProjects).toBe(2);
     expect(s.counts.totalCrs).toBe(3);
-    expect(s.counts.requirements).toBe(0);
+    expect(s.counts.scenarios).toBe(0);
     expect(s.counts.testCases).toBe(0);
     expect(s.percentages).toEqual({ automationCoverage: null, executionProgress: null, evidenceCompletion: null });
     expect(s.recentActivity.length).toBeGreaterThan(0);
@@ -165,7 +165,12 @@ describe('dashboard', () => {
 
   it('counts only the latest execution per test case', async () => {
     const cr = await t.db.changeRequest.findUniqueOrThrow({ where: { id: crId } });
-    const sc = await t.db.testScenario.create({ data: { crId: cr.id, scenarioCode: 'CR30045-TS-001', title: 'x', reviewStatus: 'APPROVED' } });
+    const empty = JSON.stringify([]);
+    const off = JSON.stringify({ applicable: false, statement: '' });
+    const wb = await t.db.scenarioWorkbook.create({
+      data: { crId: cr.id, version: 1, documents: empty, dimensions: empty, wip: off, enhancement: off, decisionTables: empty, requirementCoverage: empty, wipCoverage: empty, enhancementCoverage: empty, clarifications: empty, selfReview: empty, checks: empty },
+    });
+    const sc = await t.db.testScenario.create({ data: { crId: cr.id, workbookId: wb.id, scenarioCode: 'CR30045-TS-001', title: 'x', reviewStatus: 'APPROVED' } });
     const tc = await t.db.testCase.create({ data: { scenarioId: sc.id, testCaseCode: 'TC-001', description: 'x' } });
     await t.db.executionRun.create({ data: { testCaseId: tc.id, status: 'FAILED', startedAt: new Date(Date.now() - 60000) } });
     await t.db.executionRun.create({ data: { testCaseId: tc.id, status: 'PASSED' } });

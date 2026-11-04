@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { buildAnalysisInput, resolveSource, type AnalysedDocument, type ExtractedRequirement } from '../src/agents/crAnalyst.js';
+import { renderDocuments, resolveSource, type AnalysedDocument } from '../src/agents/documents.js';
+import type { ScenarioAnswer } from '../src/agents/scenarioAnalyst.js';
 import { loadConfig } from '../src/config.js';
 import { ClaudeCodeAiClient, type ClaudeRunner } from '../src/lib/claudeCode.js';
 import { extractDocument } from '../src/lib/extract.js';
@@ -23,6 +24,7 @@ const crWithScreens = () =>
     { image: AFTER, ext: 'png' },
     { p: 'Display new alert message and allow to proceed if the accumulated Delivery Amount has exceeded PR threshold value' },
   ]);
+const cr = { crNumber: 'CR1', version: '1.0', title: 'T', description: null, project: { code: 'P' } } as Parameters<typeof renderDocuments>[0];
 
 describe('pictures inside Word documents', () => {
   it('are extracted in order, marked [Image N] where they appear, and unreadable formats are reported', async () => {
@@ -43,21 +45,19 @@ describe('pictures inside Word documents', () => {
   it('are sent to the analyst as image blocks, each labelled with its document, number and position', async () => {
     const x = await extractDocument(await crWithScreens(), 'DOCX');
     const doc = { id: 'd1', originalName: 'cr.docx', version: 1, fileType: 'DOCX' } as AnalysedDocument['doc'];
-    const cr = { crNumber: 'CR1', version: '1.0', title: 'T', description: null, project: { code: 'P' } } as Parameters<typeof buildAnalysisInput>[0];
-    const { system, content } = buildAnalysisInput(cr, [{ doc, extraction: x }], []);
-    expect(system).toMatch(/Read every one/);
-    expect(system).toMatch(/"Before" and "after" screens/);
-    const images = content.filter((b) => b.type === 'image');
-    expect(images).toHaveLength(2);
+    const content = renderDocuments(cr, [{ doc, extraction: x }], '', 'Analyse.');
+    expect(content.filter((b) => b.type === 'image')).toHaveLength(2);
     expect(promptText(content)).toContain('Document 1 (cr.docx), Image 3, which appears in Text after Table 1:');
     expect(promptText(content)).toContain('(2 picture(s) from this document are attached after the text');
   });
 
-  it('a requirement taken from a picture points at that picture (unverified, since pictures cannot be text-checked)', async () => {
+  it('a scenario taken from a picture points at that picture (unverified, since pictures cannot be text-checked)', async () => {
     const x = await extractDocument(await crWithScreens(), 'DOCX');
     const d = [{ doc: { id: 'd1', originalName: 'cr.docx', version: 1, fileType: 'DOCX' } as AnalysedDocument['doc'], extraction: x }];
-    const item = { documentIndex: 1, location: 'Image 3', quote: 'Accumulated Delivery Amount is exceeded', description: 'x' } as ExtractedRequirement;
-    expect(resolveSource(item, d)).toMatchObject({ verified: false, reference: 'cr.docx (v1) › Image 3 (in Text after Table 1)' });
+    expect(resolveSource({ documentIndex: 1, location: 'Image 3', quote: 'Accumulated Delivery Amount is exceeded' }, d)).toMatchObject({
+      verified: false,
+      reference: 'cr.docx (v1) › Image 3 (in Text after Table 1)',
+    });
   });
 });
 
@@ -105,20 +105,29 @@ describe('Claude Code engine with pictures', () => {
   });
 });
 
-describe('analysis of a CR with screenshots, end to end (scripted AI)', () => {
+describe('scenario generation for a CR with screenshots, end to end (scripted AI)', () => {
+  const answer: ScenarioAnswer = {
+    dimensions: [],
+    wip: { applicable: false, statement: 'n/a' },
+    enhancement: { applicable: true, statement: 'Before/after screens' },
+    scenarios: [
+      {
+        key: 'S1', requirementRef: 'Appendix B', documentIndex: 1, location: 'Image 3', quote: null, module: 'FL', functionScreen: 'DO Creation',
+        types: ['Enhancement'], enhancementState: 'After Enhancement', transactionState: 'N/A', status: 'Pending Fulfilment', role: 'Supplier',
+        businessCondition: 'Accumulated amount > threshold', existingValue: 'N/A', actionChange: 'Submit', confirmation: 'N/A', testData: 'N/A',
+        description: 'Verify the new alert appears above the Delivery Amount field.', expectedResult: 'Blue alert banner shown.', priority: 'Medium', regression: false, remarks: '',
+      },
+    ],
+    decisionTables: [],
+    requirementCoverage: [],
+    clarifications: [],
+    wipCoverage: [],
+    enhancementCoverage: [],
+    selfReview: [],
+  };
   const ai = new ScriptedAi(({ content }) => {
     expect(content.filter((b) => b.type === 'image')).toHaveLength(2);
-    return {
-      crSummary: 's',
-      impactedModules: [],
-      regressionImpact: [],
-      requirements: [
-        {
-          documentIndex: 1, location: 'Image 3', quote: null, module: 'FL', feature: 'DO Creation', description: 'The after screen shows the new alert above the Delivery Amount field.',
-          requirementType: 'FUNCTIONAL', classification: 'INFERRED', businessRule: null, userRole: 'Supplier', risk: 'MEDIUM', rationale: 'Shown only in the Appendix B screen.',
-        },
-      ],
-    };
+    return answer;
   });
   let t: Awaited<ReturnType<typeof makeTestApp>>;
   beforeAll(async () => (t = await makeTestApp({}, { ai })));
@@ -126,8 +135,8 @@ describe('analysis of a CR with screenshots, end to end (scripted AI)', () => {
 
   it('stores the picture reference, and the preview lists and serves the pictures', async () => {
     const p = await t.app.inject({ method: 'POST', url: '/api/projects', payload: { code: 'PIC', name: 'Pictures' } });
-    const cr = await t.app.inject({ method: 'POST', url: `/api/projects/${p.json().id}/crs`, payload: { crNumber: 'CR5000', title: 'Screens' } });
-    const crId = cr.json().id;
+    const crRes = await t.app.inject({ method: 'POST', url: `/api/projects/${p.json().id}/crs`, payload: { crNumber: 'CR5000', title: 'Screens' } });
+    const crId = crRes.json().id;
     const up = await t.app.inject({ method: 'POST', url: `/api/crs/${crId}/documents`, ...multipart([{ name: 'cr.docx', content: await crWithScreens() }]) });
     const docId = up.json()[0].id;
 
@@ -140,9 +149,9 @@ describe('analysis of a CR with screenshots, end to end (scripted AI)', () => {
     expect(pic.rawPayload.equals(AFTER)).toBe(true);
     expect((await t.app.inject({ method: 'GET', url: `/api/documents/${docId}/images/1` })).statusCode).toBe(404); // WMF is not served
 
-    await t.app.inject({ method: 'POST', url: `/api/crs/${crId}/analyse`, payload: {} });
+    await t.app.inject({ method: 'POST', url: `/api/crs/${crId}/generate-scenarios`, payload: {} });
     await (t.app as unknown as { qamc: { runner: { idle(): Promise<void> } } }).qamc.runner.idle();
-    const reqs = (await t.app.inject({ method: 'GET', url: `/api/crs/${crId}/requirements` })).json();
-    expect(reqs[0]).toMatchObject({ sourceReference: 'cr.docx (v1) › Image 3 (in Text after Table 1)', sourceVerified: false, classification: 'INFERRED' });
+    const { scenarios } = (await t.app.inject({ method: 'GET', url: `/api/crs/${crId}/scenarios` })).json();
+    expect(scenarios[0]).toMatchObject({ scenarioCode: 'CR5000-TS-001', sourceReference: 'cr.docx (v1) › Image 3 (in Text after Table 1)', sourceVerified: false });
   });
 });

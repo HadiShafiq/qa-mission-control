@@ -74,7 +74,7 @@ const STATUS_STYLE: Record<string, string> = {
   QUEUED: 'bg-surface-2 text-ink-2 border-line',
   RUNNING: 'bg-signal-soft text-signal border-signal/25',
   CANCELLED: 'bg-surface-2 text-ink-3 border-line',
-  // requirement review (pass/fail colours stay reserved for test outcomes)
+  // scenario review (pass/fail colours stay reserved for test outcomes)
   PENDING: 'bg-surface-2 text-ink-2 border-line',
   CLARIFICATION_REQUIRED: 'bg-attn-soft text-attn border-attn/25',
   REJECTED: 'bg-surface-2 text-ink-3 border-line line-through',
