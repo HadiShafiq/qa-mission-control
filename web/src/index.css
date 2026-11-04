@@ -1,0 +1,113 @@
+@import 'tailwindcss';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Design tokens — "inspection room" palette.
+  Cool slate ink on a near-white work surface, one deep teal signal colour for
+  actions and the traceability chain, and three status colours reserved for
+  test outcomes only (pass / fail / blocked) so they never mean anything else.
+*/
+:root {
+  --bg: #f3f5f6;
+  --surface: #ffffff;
+  --surface-2: #f8fafb;
+  --line: #dde3e7;
+  --line-strong: #c5cfd5;
+  --ink: #15212b;
+  --ink-2: #4a5964;
+  --ink-3: #7b8892;
+  --signal: #0f6e7b;
+  --signal-ink: #ffffff;
+  --signal-soft: #e3f1f2;
+  --pass: #1f7a4d;
+  --pass-soft: #e4f3ea;
+  --fail: #b93535;
+  --fail-soft: #fbe8e8;
+  --blocked: #a1670f;
+  --blocked-soft: #fbf0dc;
+  --attn: #6a4c9c;
+  --attn-soft: #f0ebf8;
+  --focus: #1a8fa0;
+}
+
+.dark {
+  --bg: #0d1418;
+  --surface: #141d22;
+  --surface-2: #18232a;
+  --line: #24323a;
+  --line-strong: #33444e;
+  --ink: #e2e9ed;
+  --ink-2: #a7b4bc;
+  --ink-3: #74838c;
+  --signal: #43b3c1;
+  --signal-ink: #06262b;
+  --signal-soft: #15343a;
+  --pass: #55c08a;
+  --pass-soft: #163024;
+  --fail: #ec7b7b;
+  --fail-soft: #3a1c1e;
+  --blocked: #e0a649;
+  --blocked-soft: #3a2c14;
+  --attn: #b9a2e3;
+  --attn-soft: #2a2238;
+  --focus: #5ccbd8;
+}
+
+@theme inline {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-signal: var(--signal);
+  --color-signal-ink: var(--signal-ink);
+  --color-signal-soft: var(--signal-soft);
+  --color-attn: var(--attn);
+  --color-attn-soft: var(--attn-soft);
+  --color-pass: var(--pass);
+  --color-pass-soft: var(--pass-soft);
+  --color-fail: var(--fail);
+  --color-fail-soft: var(--fail-soft);
+  --color-blocked: var(--blocked);
+  --color-blocked-soft: var(--blocked-soft);
+  --color-focus: var(--focus);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  font-feature-settings: 'tnum' 1; /* aligned figures for IDs and counts */
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

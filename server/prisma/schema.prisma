@@ -1,0 +1,401 @@
+// QA Mission Control — database schema
+//
+// Phase 1 uses SQLite for zero-install local development on Windows.
+// To move to PostgreSQL: change `provider` to "postgresql", point DATABASE_URL
+// at your server, and run `npx prisma migrate dev`. Status fields are stored as
+// strings and validated in the API layer (see src/domain/constants.ts) so the
+// schema stays portable between both databases.
+//
+// Binary files are NEVER stored in the database. Uploaded documents and
+// generated artifacts live on disk under STORAGE_DIR; the tables below store
+// only metadata, a relative storage key and a SHA-256 checksum.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Users & audit ───────────────────────────────
+
+model User {
+  id          String   @id @default(cuid())
+  displayName String
+  email       String?  @unique
+  role        String   @default("QA_ENGINEER") // ADMIN | QA_LEAD | QA_ENGINEER | VIEWER
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  projectId  String?
+  entityType String // Project | ChangeRequest | SourceDocument | EnvironmentConfiguration | ...
+  entityId   String
+  action     String // CREATED | UPDATED | ARCHIVED | RESTORED | UPLOADED | ...
+  summary    String
+  changes    String? // JSON: { field: { from, to } }
+  actor      String   @default("local-user")
+  createdAt  DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([entityType, entityId])
+  @@index([projectId, createdAt])
+  @@index([createdAt])
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ─────────────────────────────── Projects & CRs ──────────────────────────────
+
+model Project {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  name        String
+  description String?
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  changeRequests ChangeRequest[]
+  environments   EnvironmentConfiguration[]
+  auditLogs      AuditLog[]
+  artifacts      GeneratedArtifact[]
+  templates      Template[]
+  defects        Defect[]
+  agentTasks     AgentTask[]
+
+  @@index([archivedAt])
+}
+
+model EnvironmentConfiguration {
+  id          String    @id @default(cuid())
+  projectId   String
+  name        String // e.g. SIT, UAT, Local
+  type        String // SIT | UAT | LOCAL | CUSTOM
+  baseUrl     String
+  description String?
+  // Credentials are intentionally NOT stored here. A secure credential store
+  // is planned for Phase 5 (automation execution).
+  archivedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  executionRuns ExecutionRun[]
+
+  @@unique([projectId, name])
+}
+
+model ChangeRequest {
+  id              String    @id @default(cuid())
+  projectId       String
+  crNumber        String
+  title           String
+  description     String?
+  version         String    @default("1.0")
+  analysisStatus  String    @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | ANALYSED | APPROVED
+  automationStatus String   @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETED
+  evidenceStatus  String    @default("NOT_STARTED") // NOT_STARTED | IN_PROGRESS | COMPLETED
+  archivedAt      DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  project      Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  documents    SourceDocument[]
+  requirements Requirement[]
+  scenarios    TestScenario[]
+  artifacts    GeneratedArtifact[]
+  defects      Defect[]
+  agentTasks   AgentTask[]
+
+  @@unique([projectId, crNumber])
+  @@index([projectId, archivedAt])
+}
+
+// ─────────────────────────────── Files ───────────────────────────────────────
+
+model SourceDocument {
+  id           String    @id @default(cuid())
+  crId         String
+  originalName String
+  storedName   String
+  storageKey   String    @unique // path relative to STORAGE_DIR, always '/'-separated
+  mimeType     String
+  fileType     String // PDF | DOCX | XLSX | PNG | JPEG
+  sizeBytes    Int
+  sha256       String
+  version      Int       @default(1) // increments when a file with the same name is re-uploaded
+  uploadedBy   String    @default("local-user")
+  archivedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  changeRequest ChangeRequest @relation(fields: [crId], references: [id], onDelete: Cascade)
+
+  @@index([crId, originalName])
+}
+
+model GeneratedArtifact {
+  id           String   @id @default(cuid())
+  projectId    String
+  crId         String?
+  artifactType String // REQUIREMENTS_XLSX | SCENARIOS_XLSX | RTM_XLSX | SITCR_XLSX | UAT_PACK_XLSX | PLAYWRIGHT_TS | ZIP | REPORT
+  name         String // logical name; versions share the same name
+  version      Int
+  fileName     String
+  storageKey   String   @unique
+  mimeType     String
+  sizeBytes    Int
+  sha256       String
+  createdBy    String   @default("local-user")
+  createdAt    DateTime @default(now())
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  changeRequest ChangeRequest? @relation(fields: [crId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, name, version])
+}
+
+model Template {
+  id           String   @id @default(cuid())
+  projectId    String?
+  templateType String // TEST_SCENARIO | SITCR | UAT_EVIDENCE_PACK | RTM | EXECUTION_REPORT | DEFECT_REPORT
+  name         String
+  version      Int      @default(1)
+  isDefault    Boolean  @default(false)
+  storageKey   String
+  mapping      String? // JSON field mapping (Phase 4)
+  createdAt    DateTime @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────── Traceability chain (populated from Phase 2 onwards) ───────
+// These tables exist now so that dashboard metrics are calculated from real,
+// empty tables rather than placeholders. They will be extended in later phases.
+
+model Requirement {
+  id              String   @id @default(cuid())
+  crId            String
+  requirementCode String // e.g. CR30045-REQ-001
+  module          String?
+  feature         String?
+  description     String
+  requirementType String   @default("FUNCTIONAL") // FUNCTIONAL | NON_FUNCTIONAL
+  classification  String   @default("EXPLICIT") // EXPLICIT | INFERRED | ASSUMPTION | CLARIFICATION_REQUIRED
+  businessRule    String?
+  userRole        String?
+  sourceReference String?
+  // Phase 2: where the requirement came from, and whether the server confirmed
+  // that the quoted text really appears in the cited document.
+  sourceDocumentId String?
+  sourceQuote      String?
+  sourceVerified   Boolean  @default(false)
+  rationale        String? // why the analyst classified it this way
+  origin           String   @default("MANUAL") // AI | MANUAL
+  agentTaskId      String?
+  revision         Int      @default(1) // current revision number
+  reviewComment    String?
+  risk            String   @default("MEDIUM") // LOW | MEDIUM | HIGH
+  reviewStatus    String   @default("PENDING") // PENDING | APPROVED | REJECTED | CLARIFICATION_REQUIRED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  changeRequest ChangeRequest         @relation(fields: [crId], references: [id], onDelete: Cascade)
+  revisions     RequirementRevision[]
+  scenarioLinks ScenarioRequirement[]
+
+  @@unique([crId, requirementCode])
+}
+
+model RequirementRevision {
+  id            String   @id @default(cuid())
+  requirementId String
+  revision      Int
+  snapshot      String // JSON
+  changeNote    String? // e.g. "Extracted by AI", "Edited", "Approved"
+  createdBy     String   @default("local-user")
+  createdAt     DateTime @default(now())
+
+  requirement Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@unique([requirementId, revision])
+}
+
+model TestScenario {
+  id                    String   @id @default(cuid())
+  crId                  String
+  scenarioCode          String // e.g. CR30045-TS-001
+  title                 String
+  description           String?
+  testType              String?
+  priority              String   @default("MEDIUM")
+  userRole              String?
+  automationFeasibility String?
+  reviewStatus          String   @default("PENDING")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  changeRequest    ChangeRequest         @relation(fields: [crId], references: [id], onDelete: Cascade)
+  requirementLinks ScenarioRequirement[]
+  testCases        TestCase[]
+
+  @@unique([crId, scenarioCode])
+}
+
+// One requirement → many scenarios, one scenario → many requirements.
+model ScenarioRequirement {
+  scenarioId    String
+  requirementId String
+
+  scenario    TestScenario @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  requirement Requirement  @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@id([scenarioId, requirementId])
+}
+
+model TestCase {
+  id            String   @id @default(cuid())
+  scenarioId    String
+  testCaseCode  String
+  description   String
+  objective     String?
+  userRole      String?
+  preconditions String?
+  testData      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  scenario          TestScenario       @relation(fields: [scenarioId], references: [id], onDelete: Cascade)
+  steps             TestStep[]
+  executionRuns     ExecutionRun[]
+  automationScripts AutomationScript[]
+  evidence          Evidence[]
+
+  @@unique([scenarioId, testCaseCode])
+}
+
+model TestStep {
+  id             String @id @default(cuid())
+  testCaseId     String
+  stepNumber     Int
+  action         String
+  expectedResult String
+
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+
+  @@unique([testCaseId, stepNumber])
+}
+
+model AutomationScript {
+  id         String   @id @default(cuid())
+  testCaseId String
+  name       String
+  status     String   @default("DRAFT")
+  createdAt  DateTime @default(now())
+
+  testCase TestCase @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+}
+
+// Every execution is a new row — retests never overwrite history.
+model ExecutionRun {
+  id            String    @id @default(cuid())
+  testCaseId    String
+  environmentId String?
+  mode          String    @default("MANUAL") // MANUAL | AUTOMATED
+  status        String // NOT_STARTED | IN_PROGRESS | PASSED | FAILED | BLOCKED | NOT_APPLICABLE
+  actualResult  String?
+  executor      String    @default("local-user")
+  remarks       String?
+  startedAt     DateTime  @default(now())
+  finishedAt    DateTime?
+
+  testCase    TestCase                  @relation(fields: [testCaseId], references: [id], onDelete: Cascade)
+  environment EnvironmentConfiguration? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  evidence    Evidence[]
+
+  @@index([testCaseId, startedAt])
+}
+
+model Evidence {
+  id             String   @id @default(cuid())
+  testCaseId     String?
+  executionRunId String?
+  storageKey     String
+  originalName   String
+  matchStatus    String   @default("REVIEW_REQUIRED") // MATCHED | REVIEW_REQUIRED | UNMATCHED
+  createdAt      DateTime @default(now())
+
+  testCase     TestCase?     @relation(fields: [testCaseId], references: [id], onDelete: SetNull)
+  executionRun ExecutionRun? @relation(fields: [executionRunId], references: [id], onDelete: SetNull)
+}
+
+model Defect {
+  id         String   @id @default(cuid())
+  projectId  String
+  crId       String?
+  defectCode String
+  title      String
+  severity   String   @default("MEDIUM")
+  priority   String   @default("MEDIUM")
+  status     String   @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | RETEST | CLOSED | REOPENED
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  changeRequest ChangeRequest? @relation(fields: [crId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, defectCode])
+}
+
+// ─────────────────────────────── Agents (Phase 2+ / Phase 9) ─────────────────
+
+model AgentTask {
+  id              String    @id @default(cuid())
+  projectId       String
+  crId            String?
+  agent           String // CR_ANALYST | SCENARIO_GENERATOR | ...
+  taskType        String
+  status          String    @default("QUEUED") // QUEUED | RUNNING | AWAITING_APPROVAL | COMPLETED | FAILED | CANCELLED
+  progress        Int       @default(0) // 0-100
+  progressMessage String?
+  model           String?
+  input           String? // JSON
+  output          String? // JSON
+  usage           String? // JSON: token usage reported by the AI provider
+  error           String?
+  createdAt       DateTime  @default(now())
+  startedAt       DateTime?
+  finishedAt      DateTime?
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  changeRequest ChangeRequest? @relation(fields: [crId], references: [id], onDelete: SetNull)
+  approvals     Approval[]
+
+  @@index([projectId, status])
+  @@index([crId, createdAt])
+}
+
+model Approval {
+  id          String    @id @default(cuid())
+  agentTaskId String?
+  entityType  String
+  entityId    String
+  status      String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  decidedBy   String?
+  decidedAt   DateTime?
+  comment     String?
+  createdAt   DateTime  @default(now())
+
+  agentTask AgentTask? @relation(fields: [agentTaskId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}

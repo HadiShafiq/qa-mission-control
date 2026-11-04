@@ -1,0 +1,30 @@
+{
+  "name": "qa-mission-control",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered QA engineering platform — runs locally on Windows, macOS and Linux",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "engines": {
+    "node": ">=20.11"
+  },
+  "scripts": {
+    "setup": "npm install && npm run setup:env && npm run db:deploy -w server",
+    "setup:env": "node scripts/setup-env.mjs",
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"npm run dev -w server\" \"npm run dev -w web\"",
+    "build": "npm run build -w server && npm run build -w web",
+    "start": "npm run build && node scripts/start-prod.mjs",
+    "typecheck": "npm run typecheck -w server && npm run typecheck -w web",
+    "test": "npm run test -w server",
+    "test:e2e": "npm run test:e2e -w web",
+    "test:all": "npm run typecheck && npm test && npm run test:e2e",
+    "db:migrate": "npm run db:migrate -w server",
+    "db:seed": "npm run db:seed -w server",
+    "db:studio": "npm run db:studio -w server"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
