@@ -34,7 +34,9 @@ export function snapshotOf(s: TestScenario) {
 }
 
 export async function writeScenarioRevision(tx: Db, s: TestScenario, changeNote: string) {
-  await tx.scenarioRevision.create({ data: { scenarioId: s.id, revision: s.revision, snapshot: JSON.stringify(snapshotOf(s)), changeNote } });
+  // Skill-format scenarios snapshot their steps (module-adaptive columns) plus the review decision.
+  const snapshot = s.steps !== null ? { steps: JSON.parse(s.steps) as unknown, reviewStatus: s.reviewStatus, reviewComment: s.reviewComment } : snapshotOf(s);
+  await tx.scenarioRevision.create({ data: { scenarioId: s.id, revision: s.revision, snapshot: JSON.stringify(snapshot), changeNote } });
 }
 
 const PRIORITY_LABEL: Record<string, Scenario['priority']> = { HIGH: 'High', MEDIUM: 'Medium', LOW: 'Low' };

@@ -2,12 +2,13 @@ import type { AgentTask } from '@prisma/client';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { NOT_CONNECTED_MESSAGE, type AnalysisTaskInput } from '../agents/documents.js';
-import { SCENARIO_ANALYST } from '../agents/scenarioAnalyst.js';
+import { SCENARIO_ANALYST } from '../agents/skillAnalyst.js';
 import type { AppContext } from '../context.js';
 import { ACTIVE_TASK_STATUSES } from '../domain/constants.js';
 import { audit } from '../lib/audit.js';
 import { AppError, badRequest, conflict, notFound } from '../lib/errors.js';
 import { extractDocument } from '../lib/extract.js';
+import { builderAvailable } from '../lib/workbookBuilder.js';
 import { IdParams, parse } from '../lib/validate.js';
 
 const AnalyseBody = z.object({
@@ -24,7 +25,10 @@ export function shapeTask(t: AgentTask) {
   };
 }
 
-export async function analysisRoutes(app: FastifyInstance, { db, storage, ai, runner }: AppContext) {
+export async function analysisRoutes(app: FastifyInstance, { db, storage, ai, runner, config }: AppContext) {
+  // The QA skill's builder needs Python + openpyxl; check once so a run can't fail after 15 minutes of AI work.
+  const builder = builderAvailable(config.pythonPath);
+
   /**
    * Preview of the text the analyst will read, with the reference labels it
    * will cite. Works without an API key, so extraction can be checked first.
@@ -68,6 +72,9 @@ export async function analysisRoutes(app: FastifyInstance, { db, storage, ai, ru
     if (!cr) throw notFound('Change request');
     if (cr.archivedAt || cr.project.archivedAt) throw conflict('Archived CRs are read-only. Restore it first.');
     if (!ai) throw new AppError(409, 'AI_NOT_CONNECTED', NOT_CONNECTED_MESSAGE);
+    if (agent === SCENARIO_ANALYST && !builder) {
+      throw new AppError(409, 'BUILDER_MISSING', `The QA skill's workbook builder needs Python with openpyxl ("${config.pythonPath}"). Install it (py -m pip install openpyxl) or set PYTHON_PATH in server/.env, then restart the server.`);
+    }
 
     const docs = await db.sourceDocument.findMany({
       where: { crId: id, archivedAt: null, ...(body.documentIds ? { id: { in: body.documentIds } } : {}) },

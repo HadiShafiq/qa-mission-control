@@ -19,7 +19,9 @@ import { AiError, parseStructured, type AiClient, type AiContent, type Structure
  */
 
 export type ClaudeRun = { code: number | null; stdout: string; stderr: string };
-export type ClaudeRunner = (args: string[], stdin: string, opts: { signal?: AbortSignal; timeoutMs: number }) => Promise<ClaudeRun>;
+export const SYSTEM_PROMPT_FILE = 'system-prompt.md';
+/** `files` are written into the CLI's empty working folder first (e.g. a long system prompt). */
+export type ClaudeRunner = (args: string[], stdin: string, opts: { signal?: AbortSignal; timeoutMs: number; files?: Record<string, string> }) => Promise<ClaudeRun>;
 
 /** Version string of the installed CLI, or null if it can't be run. */
 export function claudeCodeVersion(cliPath: string): string | null {
@@ -32,9 +34,10 @@ export function claudeCodeVersion(cliPath: string): string | null {
 }
 
 export function spawnClaude(cliPath: string, maxOutputTokens?: number): ClaudeRunner {
-  return async (args, stdin, { signal, timeoutMs }) => {
+  return async (args, stdin, { signal, timeoutMs, files = {} }) => {
     const cwd = path.join(os.tmpdir(), `qamc-claude-${randomUUID()}`);
     await fs.mkdir(cwd, { recursive: true });
+    for (const [name, content] of Object.entries(files)) await fs.writeFile(path.join(cwd, path.basename(name)), content, 'utf8');
     // Use the subscription login, never an API key or token inherited from server/.env.
     const env = { ...process.env };
     delete env.ANTHROPIC_API_KEY;
@@ -133,7 +136,8 @@ export class ClaudeCodeAiClient implements AiClient {
       '-p',
       ...(hasPictures ? ['--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose'] : ['--output-format', 'json']),
       '--json-schema', JSON.stringify(betaZodOutputFormat(schema).schema),
-      '--system-prompt', system,
+      // From a file: a long prompt (e.g. the 60 KB QA skill) exceeds the Windows command-line limit.
+      '--system-prompt-file', SYSTEM_PROMPT_FILE,
       '--tools', '',
       '--strict-mcp-config',
       '--no-session-persistence',
@@ -141,7 +145,7 @@ export class ClaudeCodeAiClient implements AiClient {
       '--effort', this.config.ai.effort,
     ];
     const stdin = hasPictures ? `${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n` : textOf(content);
-    const out = await this.run(args, stdin, { signal, timeoutMs: timeoutMs ?? this.config.ai.timeoutMs });
+    const out = await this.run(args, stdin, { signal, timeoutMs: timeoutMs ?? this.config.ai.timeoutMs, files: { [SYSTEM_PROMPT_FILE]: system } });
     const j = parseCliOutput(hasPictures ? { ...out, stdout: lastResultLine(out.stdout) } : out);
 
     if (j.stop_reason === 'refusal') throw new AiError('REFUSAL', 'Claude declined this request. Nothing was saved.');

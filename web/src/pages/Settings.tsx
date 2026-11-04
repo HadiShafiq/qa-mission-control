@@ -40,6 +40,11 @@ export function SettingsPage() {
                 <span className="break-all">{s.data.storageDir}</span> <Check ok={h.data?.checks.storage} />
               </Row>
               <Row label="Upload limit">{s.data.maxUploadMb} MB per file</Row>
+              <Row label="QA skill builder">
+                <span className={cn(s.data.workbookBuilder.available ? 'text-pass' : 'text-fail')} data-testid="builder-status">
+                  {s.data.workbookBuilder.available ? `${s.data.workbookBuilder.skill} · ${s.data.workbookBuilder.detail}` : s.data.workbookBuilder.detail}
+                </span>
+              </Row>
             </dl>
           </Panel>
           <Panel title="AI provider">

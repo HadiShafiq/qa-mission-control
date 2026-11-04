@@ -19,6 +19,8 @@ const EnvSchema = z.object({
   // auto: API key → Claude Code CLI (your Claude subscription) → `ant auth login` profile.
   AI_PROVIDER: z.enum(['auto', 'anthropic-api', 'claude-code']).default('auto'),
   CLAUDE_CODE_PATH: z.string().trim().min(1).default(process.platform === 'win32' ? 'claude.exe' : 'claude'),
+  // Python that runs the QA skill's workbook builder (needs openpyxl). On Windows the `py` launcher.
+  PYTHON_PATH: z.string().trim().min(1).default(process.platform === 'win32' ? 'py' : 'python3'),
   AI_EFFORT: z.enum(['low', 'medium', 'high', 'xhigh', 'max']).default('high'),
   // Budget per request. Requests whose input would exceed AI_MAX_INPUT_TOKENS are
   // refused before anything is sent (documents are never silently truncated).
@@ -37,6 +39,7 @@ export type AppConfig = {
   maxUploadBytes: number;
   corsOrigin: string;
   logLevel: string;
+  pythonPath: string;
   ai: {
     configured: boolean;
     model: string;
@@ -67,6 +70,7 @@ export function loadConfig(overrides: Partial<Record<keyof z.infer<typeof EnvSch
     maxUploadBytes: Math.round(e.MAX_UPLOAD_MB * 1024 * 1024),
     corsOrigin: e.CORS_ORIGIN,
     logLevel: e.LOG_LEVEL,
+    pythonPath: e.PYTHON_PATH,
     ai: {
       configured: Boolean(e.ANTHROPIC_API_KEY && e.ANTHROPIC_API_KEY.trim()),
       model: e.ANTHROPIC_MODEL,

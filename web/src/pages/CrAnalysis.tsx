@@ -11,7 +11,6 @@ import { Input, Select } from '@/components/ui/form';
 import { EmptyState, ErrorNotice, PageHeader, Panel, Skeleton, StatusBadge } from '@/components/ui/misc';
 import {
   ApiError,
-  SCENARIO_TYPES,
   api,
   isPictureSource,
   type AgentTask,
@@ -19,7 +18,6 @@ import {
   type ChangeRequest,
   type DocumentExtraction,
   type ReviewStatus,
-  type ScenarioType,
   type Settings,
   type SourceDocument,
   type TestScenario,
@@ -80,17 +78,31 @@ export function CrAnalysisPage() {
 
 // ───────────────────────── QA test scenario workbook ─────────────────────────
 
+/** Task output. SKILL_V1 = generated with the QA skill; older runs have the earlier fields. */
 type ScenarioOutput = {
+  format?: 'SKILL_V1';
   artifactId: string;
   fileName: string;
   scenarioCount: number;
   clarificationCount: number;
-  decisionTableCount: number;
   unverifiedCount: number;
-  wipApplicable: boolean;
-  enhancementApplicable: boolean;
-  totals: [string, number][];
   checks: string[];
+  // QA skill runs
+  design?: string;
+  wipDecision?: string;
+  module?: string;
+  stepCount?: number;
+  matrixCount?: number;
+  requirementCount?: number;
+  auditResult?: 'PASS' | 'FAIL';
+  auditErrors?: string[];
+  auditWarnings?: string[];
+  repaired?: boolean;
+  // earlier runs
+  decisionTableCount?: number;
+  wipApplicable?: boolean;
+  enhancementApplicable?: boolean;
+  totals?: [string, number][];
 };
 
 function ScenarioPanel({ cr, aiConnected, readOnly }: { cr: ChangeRequest; aiConnected: boolean; readOnly: boolean }) {
@@ -132,7 +144,7 @@ function ScenarioPanel({ cr, aiConnected, readOnly }: { cr: ChangeRequest; aiCon
 
   const blocked = !aiConnected ? 'AI is not connected.' : readOnly ? 'The CR is archived.' : !docs.data?.length ? 'Upload at least one document first.' : active ? 'Generation is already running.' : null;
   const versions = artifacts.data?.filter((a) => a.artifactType === 'SCENARIOS_XLSX') ?? [];
-  const total = (label: string) => out?.totals.find(([k]) => k === label)?.[1] ?? 0;
+  const total = (label: string) => out?.totals?.find(([k]) => k === label)?.[1] ?? 0;
 
   return (
     <Panel
@@ -147,7 +159,7 @@ function ScenarioPanel({ cr, aiConnected, readOnly }: { cr: ChangeRequest; aiCon
     >
       <div className="space-y-4 p-4">
         <p className="text-[13.5px] text-ink-2">
-          Analyses the CR / FRS with your QA prompt (test dimensions, decision tables, status / role / WIP / before–after coverage) and builds an execution-ready workbook: Test Scenarios, Decision Table, Requirement Coverage, Clarification Required, Scenario Summary, WIP and Enhancement coverage. Scenario IDs, cross-references and summary counts are checked by the app.
+          Uses your QA skill (<strong>qa-test-scenario-generator</strong>): Claude analyses the CR / FRS, including pictures, and chooses a module-adaptive design (status-based table, combination matrix, workflow steps or hybrid) with WIP / Non-WIP as deployment origin. Your <code className="rounded bg-surface-2 px-1">build_qa_workbook.py</code> then builds the Excel and audits it. If the audit fails, Claude gets one round to fix the errors. The scenarios are saved here for review.
         </p>
         {blocked && !active && (
           <p className="text-[13px] text-ink-3" data-testid="scenarios-blocked">
@@ -182,13 +194,14 @@ function ScenarioPanel({ cr, aiConnected, readOnly }: { cr: ChangeRequest; aiCon
               )}
               {latest.status === 'FAILED' && latest.error && <ErrorNotice error={new Error(latest.error)} />}
               {latest.status === 'CANCELLED' && <p className="text-ink-2">{latest.error ?? 'Cancelled. Nothing was saved.'}</p>}
-              {latest.status === 'COMPLETED' && out && (
+              {latest.status === 'COMPLETED' && out?.format === 'SKILL_V1' && <SkillResult out={out} />}
+              {latest.status === 'COMPLETED' && out && out.format !== 'SKILL_V1' && (
                 <>
                   <p>
                     <strong>{out.scenarioCount}</strong> scenarios · {total('Total Decision Table combinations')} decision-table combinations ({total('TBD combinations')} TBD) · <strong>{out.clarificationCount}</strong> clarifications · WIP {out.wipApplicable ? 'applicable' : 'N/A'} · Before/after {out.enhancementApplicable ? 'applicable' : 'N/A'}
                   </p>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-ink-2">
-                    {out.totals
+                    {(out.totals ?? [])
                       .slice(1, 14)
                       .filter(([, n]) => n > 0)
                       .map(([k, n]) => (
@@ -244,6 +257,58 @@ function ScenarioPanel({ cr, aiConnected, readOnly }: { cr: ChangeRequest; aiCon
   );
 }
 
+function SkillResult({ out }: { out: ScenarioOutput }) {
+  const fail = out.auditResult === 'FAIL';
+  return (
+    <div className="space-y-3" data-testid="skill-result">
+      <div className="flex flex-wrap items-center gap-2">
+        <span
+          className={cn('rounded border px-1.5 py-px text-[12px] font-semibold', fail ? 'border-attn/30 bg-attn-soft text-attn' : 'border-signal/30 bg-signal-soft text-signal')}
+          data-testid="audit-result"
+        >
+          Builder audit {out.auditResult}
+          {fail ? ' — saved as DRAFT' : ''}
+        </span>
+        {out.repaired && <span className="text-[12.5px] text-ink-2">Fixed automatically after the first audit</span>}
+        {out.module && <span className="text-[12.5px] text-ink-3">Module {out.module}</span>}
+      </div>
+      <p>
+        <strong>{out.scenarioCount}</strong> scenarios ({out.stepCount} rows / steps) · {out.matrixCount} decision matri{out.matrixCount === 1 ? 'x' : 'ces'} · {out.requirementCount} requirements traced · <strong>{out.clarificationCount}</strong> clarifications
+      </p>
+      {out.design && (
+        <p className="text-[13px] text-ink-2">
+          <span className="font-medium text-ink">Design: </span>
+          {out.design}
+        </p>
+      )}
+      {out.wipDecision && (
+        <p className="text-[13px] text-ink-2">
+          <span className="font-medium text-ink">WIP / Non-WIP: </span>
+          {out.wipDecision}
+        </p>
+      )}
+      {(out.auditErrors?.length ?? 0) + (out.auditWarnings?.length ?? 0) + out.checks.length > 0 && (
+        <details>
+          <summary className="cursor-pointer text-[13px] font-medium text-attn">
+            {out.auditErrors?.length ?? 0} audit error(s), {out.auditWarnings?.length ?? 0} warning(s), {out.checks.length} note(s) to review
+          </summary>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px] text-ink-2" data-testid="audit-items">
+            {out.auditErrors?.map((e) => (
+              <li key={'e' + e} className="text-attn">
+                ERROR: {e}
+              </li>
+            ))}
+            {out.auditWarnings?.map((w) => <li key={'w' + w}>WARNING: {w}</li>)}
+            {out.checks.map((c) => (
+              <li key={'c' + c}>{c}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // ───────────────────────── Scenario review ─────────────────────────
 
 const REVIEW_FILTERS: { value: '' | ReviewStatus; label: string }[] = [
@@ -259,7 +324,7 @@ function ScenarioReview({ cr, readOnly }: { cr: ChangeRequest; readOnly: boolean
   const [workbookId, setWorkbookId] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'' | ReviewStatus>('');
-  const [type, setType] = useState<'' | ScenarioType>('');
+  const [type, setType] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -271,7 +336,7 @@ function ScenarioReview({ cr, readOnly }: { cr: ChangeRequest; readOnly: boolean
   const qs = new URLSearchParams({ ...(current ? { workbookId: current.id } : {}), ...(status ? { reviewStatus: status } : {}), ...(type ? { type } : {}), ...(search ? { search } : {}) }).toString();
   const list = useQuery({
     queryKey: ['scenarios', cr.id, current?.id, status, type, search],
-    queryFn: () => api.get<{ workbook: WorkbookVersion | null; scenarios: TestScenario[] }>(`/api/crs/${cr.id}/scenarios?${qs}`),
+    queryFn: () => api.get<{ workbook: (WorkbookVersion & { columns: string[] | null }) | null; scenarios: TestScenario[] }>(`/api/crs/${cr.id}/scenarios?${qs}`),
     enabled: Boolean(current),
     placeholderData: (prev) => prev,
   });
@@ -280,6 +345,11 @@ function ScenarioReview({ cr, readOnly }: { cr: ChangeRequest; readOnly: boolean
     queryFn: () => api.get<{ scenarios: TestScenario[] }>(`/api/crs/${cr.id}/scenarios?workbookId=${current!.id}`),
     enabled: Boolean(current),
   });
+  // Categories come from the scenarios themselves (the skill names them per CR).
+  const typeOptions = useMemo(
+    () => [...new Set((all.data?.scenarios ?? []).flatMap((s) => (s.testType ?? '').split(',').map((t) => t.trim())).filter(Boolean))].sort(),
+    [all.data],
+  );
   const counts = useMemo(() => {
     const c: Record<string, number> = {};
     for (const s of all.data?.scenarios ?? []) c[s.reviewStatus] = (c[s.reviewStatus] ?? 0) + 1;
@@ -336,6 +406,7 @@ function ScenarioReview({ cr, readOnly }: { cr: ChangeRequest; readOnly: boolean
               {versions.data!.map((v, i) => (
                 <option key={v.id} value={v.id}>
                   Run v{v.version} · {formatDateTime(v.createdAt)}
+                  {v.format === 'SKILL_V1' ? ` · QA skill, audit ${v.auditResult}` : ''}
                   {i === 0 ? ' (latest)' : ''}
                 </option>
               ))}
@@ -375,9 +446,9 @@ function ScenarioReview({ cr, readOnly }: { cr: ChangeRequest; readOnly: boolean
             </option>
           ))}
         </Select>
-        <Select aria-label="Filter by scenario type" value={type} onChange={(e) => setType(e.target.value as '' | ScenarioType)} className="w-auto">
-          <option value="">All types</option>
-          {SCENARIO_TYPES.map((t) => (
+        <Select aria-label="Filter by scenario type" value={type} onChange={(e) => setType(e.target.value)} className="w-auto">
+          <option value="">All categories</option>
+          {typeOptions.map((t) => (
             <option key={t} value={t}>
               {t}
             </option>
@@ -437,6 +508,7 @@ function ScenarioReview({ cr, readOnly }: { cr: ChangeRequest; readOnly: boolean
                     <button className="hover:underline" onClick={() => setOpenId(r.id)}>
                       {r.scenarioCode}
                     </button>
+                    {r.steps && r.steps.length > 1 && <span className="block text-[12px] font-normal text-ink-3">{r.steps.length} steps</span>}
                   </td>
                   <td className="max-w-[420px] px-2 py-2.5">
                     <p className="line-clamp-2">{r.description ?? r.title}</p>
@@ -475,8 +547,8 @@ function ScenarioReview({ cr, readOnly }: { cr: ChangeRequest; readOnly: boolean
         </div>
       )}
 
-      <ScenarioDialog open={Boolean(openId)} onOpenChange={(o) => !o && setOpenId(null)} scenarioId={openId} readOnly={readOnly} />
-      <ScenarioDialog open={creating} onOpenChange={setCreating} workbookId={current.id} readOnly={false} />
+      <ScenarioDialog open={Boolean(openId)} onOpenChange={(o) => !o && setOpenId(null)} scenarioId={openId} columns={list.data?.workbook?.columns} readOnly={readOnly} />
+      <ScenarioDialog open={creating} onOpenChange={setCreating} workbookId={current.id} columns={list.data?.workbook?.columns} readOnly={false} />
     </Panel>
   );
 }

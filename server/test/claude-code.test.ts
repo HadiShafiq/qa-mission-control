@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { ScenarioWorkbookSchema } from '../src/agents/scenarioAnalyst.js';
+import { SkillSpecSchema as ScenarioWorkbookSchema } from '../src/agents/skillAnalyst.js';
 import { loadConfig } from '../src/config.js';
 import { AiError, createAiClient } from '../src/lib/ai.js';
 import { ClaudeCodeAiClient, type ClaudeRunner } from '../src/lib/claudeCode.js';
@@ -10,9 +10,9 @@ const cfg = (over: Record<string, string> = {}) =>
 
 /** Fake `claude -p`: records the call and returns a scripted CLI result. */
 function fakeCli(result: object | string, code = 0) {
-  const calls: { args: string[]; stdin: string }[] = [];
-  const run: ClaudeRunner = async (args, stdin) => {
-    calls.push({ args, stdin });
+  const calls: { args: string[]; stdin: string; files?: Record<string, string> }[] = [];
+  const run: ClaudeRunner = async (args, stdin, opts) => {
+    calls.push({ args, stdin, files: opts.files });
     return { code, stdout: typeof result === 'string' ? result : JSON.stringify(result), stderr: '' };
   };
   return { run, calls };
@@ -47,7 +47,10 @@ describe('Claude Code engine (subscription, no API credit)', () => {
     expect(flag('--output-format')).toBe('json');
     expect(flag('--model')).toBe('claude-opus-5-5');
     expect(flag('--effort')).toBe('high');
-    expect(flag('--system-prompt')).toBe('SYSTEM PROMPT');
+    // the system prompt goes in a file (long prompts exceed the Windows command-line limit)
+    expect(flag('--system-prompt-file')).toBe('system-prompt.md');
+    expect(calls[0].files).toEqual({ 'system-prompt.md': 'SYSTEM PROMPT' });
+    expect(args).not.toContain('SYSTEM PROMPT');
     expect(JSON.parse(flag('--json-schema')).type).toBe('object');
     // documents go on stdin, never on the command line
     expect(stdin).toBe('DOCUMENT TEXT');
@@ -55,13 +58,23 @@ describe('Claude Code engine (subscription, no API credit)', () => {
   });
 
   it('accepts the full scenario workbook schema', async () => {
-    const empty = { dimensions: [], wip: { applicable: false, statement: '' }, enhancement: { applicable: false, statement: '' }, scenarios: [], decisionTables: [], requirementCoverage: [], clarifications: [], wipCoverage: [], enhancementCoverage: [], selfReview: [] };
+    const empty = {   design: '',   wip_decision: '',   meta: { cr_no: '', title: '', module: '', phase: '', source: '', version: '' },   scenarios: { sheet_name: '', columns: [], group_headers: [], rows: [] },   matrices: [],   tables: [],   requirements: [],   clarifications: [], };
     const { run, calls } = fakeCli(ok(empty));
     const ai = new ClaudeCodeAiClient(cfg(), '2.1.316', run);
     const r = await ai.generate({ system: 's', content: [{ type: 'text', text: 'x' }], schema: ScenarioWorkbookSchema });
-    expect(r.data.scenarios).toEqual([]);
+    expect(r.data.scenarios.rows).toEqual([]);
     const schema = JSON.parse(calls[0].args[calls[0].args.indexOf('--json-schema') + 1]);
     expect(Object.keys(schema.properties)).toEqual(Object.keys(empty));
+  });
+
+  it('the real QA skill request fits the Windows command-line limit (the 60 KB skill goes in a file)', async () => {
+    const { SKILL_TEXT, APP_NOTE, SkillSpecSchema } = await import('../src/agents/skillAnalyst.js');
+    const { run, calls } = fakeCli(ok({ answer: 'x' }));
+    const ai = new ClaudeCodeAiClient(cfg(), '2.1.316', run);
+    await ai.generate({ system: SKILL_TEXT + APP_NOTE, content: [{ type: 'text', text: 'doc' }], schema: SkillSpecSchema }).catch(() => {});
+    const commandLine = calls[0].args.map((x) => `"${x}"`).join(' ');
+    expect(SKILL_TEXT.length).toBeGreaterThan(32_767);
+    expect(commandLine.length).toBeLessThan(30_000);
   });
 
   it.each([

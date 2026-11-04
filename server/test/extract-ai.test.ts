@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { resolveSource, type AnalysedDocument, type SourceClaim } from '../src/agents/documents.js';
-import { ScenarioWorkbookSchema } from '../src/agents/scenarioAnalyst.js';
+import { SkillSpecSchema as ScenarioWorkbookSchema } from '../src/agents/skillAnalyst.js';
 import { loadConfig } from '../src/config.js';
 import { AiError, AnthropicAiClient, createAiClient } from '../src/lib/ai.js';
 import { extractDocument } from '../src/lib/extract.js';
@@ -147,16 +147,14 @@ function fakeFetch(handler: (url: string, body: Record<string, unknown>) => Resp
 const cfg = (over: Record<string, string> = {}) => loadConfig({ NODE_ENV: 'test', DATABASE_URL: 'file:./x.db', ANTHROPIC_API_KEY: 'sk-test-not-real', ANTHROPIC_MODEL: 'claude-opus-5-5', AI_PROVIDER: 'anthropic-api', AI_EFFORT: 'high', AI_MAX_OUTPUT_TOKENS: '64000', AI_MAX_RETRIES: '0', ...over });
 const Small = z.object({ answer: z.string() });
 const EMPTY_WORKBOOK = {
-  dimensions: [],
-  wip: { applicable: false, statement: '' },
-  enhancement: { applicable: false, statement: '' },
-  scenarios: [],
-  decisionTables: [],
-  requirementCoverage: [],
+  design: '',
+  wip_decision: '',
+  meta: { cr_no: '', title: '', module: '', phase: '', source: '', version: '' },
+  scenarios: { sheet_name: '', columns: [], group_headers: [], rows: [] },
+  matrices: [],
+  tables: [],
+  requirements: [],
   clarifications: [],
-  wipCoverage: [],
-  enhancementCoverage: [],
-  selfReview: [],
 };
 
 describe('Anthropic client', () => {
@@ -234,7 +232,7 @@ describe('Anthropic client', () => {
     );
     const ai = new AnthropicAiClient(cfg(), { fetch: f });
     const r = await ai.generate({ system: 's', content: [{ type: 'text', text: 'x' }], schema: ScenarioWorkbookSchema });
-    expect(r.data.scenarios).toEqual([]);
+    expect(r.data.scenarios.rows).toEqual([]);
     const schema = (requests.at(-1)!.body.output_config as { format: { schema: { properties: Record<string, unknown> } } }).format.schema;
     expect(Object.keys(schema.properties)).toEqual(Object.keys(EMPTY_WORKBOOK));
   });

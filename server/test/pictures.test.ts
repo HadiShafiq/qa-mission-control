@@ -1,11 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { renderDocuments, resolveSource, type AnalysedDocument } from '../src/agents/documents.js';
-import type { ScenarioAnswer } from '../src/agents/scenarioAnalyst.js';
 import { loadConfig } from '../src/config.js';
 import { ClaudeCodeAiClient, type ClaudeRunner } from '../src/lib/claudeCode.js';
 import { extractDocument } from '../src/lib/extract.js';
-import { ScriptedAi, makeDocx, makePng, promptText } from './fixtures.js';
+import { ScriptedAi, makeDocx, makePng, promptText, skillAnswer } from './fixtures.js';
 import { makeTestApp, multipart } from './helpers.js';
 
 // A CR with before/after screens, like FL30753's Appendix A / B, plus a WMF icon.
@@ -106,25 +105,10 @@ describe('Claude Code engine with pictures', () => {
 });
 
 describe('scenario generation for a CR with screenshots, end to end (scripted AI)', () => {
-  const answer: ScenarioAnswer = {
-    dimensions: [],
-    wip: { applicable: false, statement: 'n/a' },
-    enhancement: { applicable: true, statement: 'Before/after screens' },
-    scenarios: [
-      {
-        key: 'S1', requirementRef: 'Appendix B', documentIndex: 1, location: 'Image 3', quote: null, module: 'FL', functionScreen: 'DO Creation',
-        types: ['Enhancement'], enhancementState: 'After Enhancement', transactionState: 'N/A', status: 'Pending Fulfilment', role: 'Supplier',
-        businessCondition: 'Accumulated amount > threshold', existingValue: 'N/A', actionChange: 'Submit', confirmation: 'N/A', testData: 'N/A',
-        description: 'Verify the new alert appears above the Delivery Amount field.', expectedResult: 'Blue alert banner shown.', priority: 'Medium', regression: false, remarks: '',
-      },
-    ],
-    decisionTables: [],
-    requirementCoverage: [],
-    clarifications: [],
-    wipCoverage: [],
-    enhancementCoverage: [],
-    selfReview: [],
-  };
+  const answer = skillAnswer();
+  // one scenario taken from the "after" screenshot
+  answer.scenarios.rows = [{ ...answer.scenarios.rows[2], location: 'Image 3', quote: null }];
+  answer.matrices = [];
   const ai = new ScriptedAi(({ content }) => {
     expect(content.filter((b) => b.type === 'image')).toHaveLength(2);
     return answer;
@@ -152,6 +136,6 @@ describe('scenario generation for a CR with screenshots, end to end (scripted AI
     await t.app.inject({ method: 'POST', url: `/api/crs/${crId}/generate-scenarios`, payload: {} });
     await (t.app as unknown as { qamc: { runner: { idle(): Promise<void> } } }).qamc.runner.idle();
     const { scenarios } = (await t.app.inject({ method: 'GET', url: `/api/crs/${crId}/scenarios` })).json();
-    expect(scenarios[0]).toMatchObject({ scenarioCode: 'CR5000-TS-001', sourceReference: 'cr.docx (v1) › Image 3 (in Text after Table 1)', sourceVerified: false });
+    expect(scenarios[0]).toMatchObject({ scenarioCode: '3657_SC02', sourceReference: 'cr.docx (v1) › Image 3 (in Text after Table 1)', sourceVerified: false });
   });
 });

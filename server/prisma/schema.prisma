@@ -250,6 +250,14 @@ model ScenarioWorkbook {
   clarifications      String // JSON
   selfReview          String // JSON
   checks              String // JSON: problems found by the application's checks
+  // SKILL_V1 = generated with the user's qa-test-scenario-generator skill and built by its
+  // Python builder (module-adaptive columns, steps); APP_V1 = the earlier fixed-column format.
+  format              String   @default("APP_V1")
+  spec                String? // JSON: the builder spec (SKILL_V1), scenario rows live in TestScenario.steps
+  columns             String? // JSON: Test Scenarios column order (SKILL_V1)
+  design              String? // the design chosen and why (skill Step 5)
+  auditResult         String? // PASS | FAIL (builder audit of the generated file)
+  auditReport         String? // the builder's audit text
   createdAt           DateTime @default(now())
 
   changeRequest ChangeRequest  @relation(fields: [crId], references: [id], onDelete: Cascade)
@@ -292,6 +300,8 @@ model TestScenario {
   origin                String   @default("AI") // AI | MANUAL
   revision              Int      @default(1)
   reviewComment         String?
+  // SKILL_V1: JSON array of rows (one per workflow step) — { cells: {column: value}, sourceReference, sourceQuote, sourceVerified }
+  steps                 String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 

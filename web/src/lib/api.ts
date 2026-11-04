@@ -165,6 +165,7 @@ export type Settings = {
   database: string;
   storageDir: string;
   maxUploadMb: number;
+  workbookBuilder: { available: boolean; detail: string; skill: string };
   ai: { provider: string; configured: boolean; authSource: 'api-key' | 'ant-profile' | 'claude-code' | null; model: string; status: string; effort: string; maxInputTokens: number; maxOutputTokens: number };
 };
 
@@ -194,7 +195,11 @@ export const SCENARIO_TYPES = [
 export type ScenarioType = (typeof SCENARIO_TYPES)[number];
 export type Priority = 'HIGH' | 'MEDIUM' | 'LOW';
 
+/** One row of a skill-format scenario (one workflow step), module-adaptive columns. */
+export type ScenarioStep = { cells: Record<string, string>; sourceReference: string | null; sourceQuote: string | null; sourceVerified: boolean };
+
 export type TestScenario = {
+  steps: ScenarioStep[] | null;
   id: string;
   crId: string;
   workbookId: string | null;
@@ -239,7 +244,7 @@ export type ScenarioRevision = {
   createdAt: string;
 };
 
-export type WorkbookVersion = { id: string; version: number; model: string | null; createdAt: string; scenarioCount: number; approvedCount: number; pendingCount: number };
+export type WorkbookVersion = { id: string; version: number; model: string | null; createdAt: string; format: 'APP_V1' | 'SKILL_V1'; auditResult: 'PASS' | 'FAIL' | null; scenarioCount: number; approvedCount: number; pendingCount: number };
 
 export type TaskStatus = 'QUEUED' | 'RUNNING' | 'AWAITING_APPROVAL' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
 

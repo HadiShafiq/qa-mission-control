@@ -44,8 +44,9 @@ server/src/
   domain/scenarios.ts  scenario rows ↔ workbook, revision snapshots, newest-workbook helper
   agents/runner.ts     in-process task runner (one task at a time, cancel, restart recovery)
   agents/documents.ts  load task documents, lay them out for the model, verify source quotes
-  agents/scenarioPrompt.ts  the user's QA scenario prompt (verbatim) + output note
-  agents/scenarioAnalyst.ts  output schema, application checks, saving a workbook run
+  agents/skillAnalyst.ts  QA skill analyst: SKILL.md + app note, spec schema, builder spec, fix round, save, export
+  agents/scenarioAnalyst.ts  APP_V1 (pre-skill) workbook schema and summary, for old runs
+  lib/workbookBuilder.ts  runs the skill's build_qa_workbook.py and parses its audit
   lib/ai.ts            Anthropic client wrapper (budget, retries, refusal/truncation handling)
   lib/extract.ts       PDF / DOCX / XLSX text + pictures, with references
   lib/claudeCode.ts    Claude Code CLI engine (user's subscription), locked down
@@ -126,16 +127,19 @@ Key constraints:
 
 Entities from the master prompt not yet created (added in their phase): ScenarioRevision, TemplateMapping (currently `Template.mapping` JSON), ScriptVersion, ExecutionStep, AgentRun, TestDataSet.
 
-## Data flow: QA test scenarios (the one CR analysis function)
+## Data flow: QA test scenarios with the user's skill (since 2026-11-05)
 
-1. The user uploads CR / FRS documents (or uses **New analysis**, which reads the CR number / title / version from the document or filename), then clicks **Generate test scenarios** and ticks the documents to send.
-2. `POST /api/crs/:id/generate-scenarios` checks that AI is connected, the CR is writable, the documents exist and no run is active, then creates a QUEUED `AgentTask`. The runner claims it atomically.
-3. Documents are extracted (PDF pages, Word sections / tables / rows, Excel rows, pictures marked `[Image N]`) and laid out as untrusted `<documents>` with each picture as a labelled image block (`agents/documents.ts`).
-4. The model receives the user's QA prompt **word for word** (`agents/scenarioPrompt.ts`) plus a short output note, through the configured engine: Claude Code CLI on the user's subscription (stream-json with pictures, no tools), or the Anthropic API. Output must match `ScenarioWorkbookSchema`; a refusal, truncation or mismatch saves nothing.
-5. Application checks (`checkScenarioAnswer`): final IDs `<CR>-TS-001…`, every cross-reference remapped; an unknown scenario reference makes the combination **TBD** or the coverage row **Not Covered**; unreferenced scenarios are listed; every quote is verified against the document text (pictures can't be).
-6. In one transaction: a `ScenarioWorkbook` (version n per CR, the other sheets as JSON) and one `TestScenario` row per scenario (revision 1, `ScenarioRevision` snapshot, audit entry). The CR moves to ANALYSED if it was NOT_STARTED / IN_PROGRESS.
-7. The Excel is built from the **stored rows** and saved as a versioned `GeneratedArtifact`. Later exports rebuild it from the rows again, so they include every edit and review decision; "approved only" keeps approved rows and recalculates the summary.
-8. Older runs are kept. Lists, CR counts and the dashboard use each CR's newest workbook.
+The user's own skill **qa-test-scenario-generator** is kept unchanged in `server/skills/qa-test-scenario-generator/`: `SKILL.md` (instructions) and `scripts/build_qa_workbook.py` (workbook builder + audit, Python + openpyxl).
+
+1. Upload CR / FRS (or **New analysis**) → **Generate test scenarios** → pick documents. `POST /api/crs/:id/generate-scenarios` refuses up front when AI or the builder (Python + openpyxl) is missing.
+2. Documents are extracted (text with page / section / row references; pictures as image blocks) and laid out as untrusted `<documents>` (`agents/documents.ts`).
+3. The model's instructions are `SKILL.md` word for word plus `APP_NOTE` (`agents/skillAnalyst.ts`), which only says what the app does instead of the chat steps (no questions, no SendUserFile, the app runs the builder) and asks for per-row traceability (document, location, verbatim quote). The answer is the skill's D.6 spec as structured output (`SkillSpecSchema`; rows as {column, value} cells). Claude Code receives the 60 KB instructions through `--system-prompt-file` (the Windows command line is limited to 32 KB).
+4. The app converts it to the builder's JSON spec, forces `execution_evidence_provided` / `document_numbers_user_provided` to false, verifies every quote, and adds Source Location / Source Verified / Review Status (/ Review Comment) columns.
+5. `build_qa_workbook.py` runs on the spec in a temporary folder (`lib/workbookBuilder.ts`). On **FAIL**, the analyst gets one round with its previous spec and the builder's ERROR / WARNING list; if it still fails, the workbook is saved with `--force` as `…_DRAFT.xlsx` and the audit errors are shown.
+6. Saved: a `ScenarioWorkbook` (format `SKILL_V1`, builder spec, columns, design, audit result and report) and one `TestScenario` per Scenario ID with its step rows (`steps` JSON), revision 1 and audit entries.
+7. Review in the app edits the step rows; every export rebuilds the spec from the stored rows and runs the same builder (approved-only removes other scenarios from the matrices and lets the builder recompute coverage).
+
+Runs saved before 2026-11-05 (format `APP_V1`, fixed columns) stay viewable, reviewable and exportable with the earlier Node builder.
 
 ## Scenario review rules
 
@@ -178,7 +182,7 @@ Scope: non-archived CRs in non-archived projects. A percentage is `null` (shown 
 
 | Agent | Phase | Input → output | Human checkpoint |
 |---|---|---|---|
-| QA Scenario Analyst ✅ | 2 | CR / FRS documents (text + pictures) → the user's QA test scenario workbook: dimensions, scenarios, decision tables, requirement / WIP / enhancement coverage, clarifications, self-review | Approve, reject, mark clarification or edit each scenario (one at a time or in bulk); export |
+| QA Scenario Analyst (user skill) ✅ | 2 | CR / FRS documents (text + pictures) → the user's QA test scenario workbook: dimensions, scenarios, decision tables, requirement / WIP / enhancement coverage, clarifications, self-review | Approve, reject, mark clarification or edit each scenario (one at a time or in bulk); export |
 | Test Case Generator | 4 | Approved scenarios → steps and expected results, SITCR / UAT in your template | Edit individual test cases |
 | Automation Engineer | 5 | Approved test cases → Playwright TS | Approve before running against SIT/UAT |
 | Self-Healing Engineer | 6 | Failure artefacts → classified diagnosis and minimal repair candidate | Approve significant repairs |

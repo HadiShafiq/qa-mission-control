@@ -1,5 +1,18 @@
 # Test results
 
+## Scenario generation with the user's QA skill — 2026-11-05
+
+The user's skill **qa-test-scenario-generator** (SKILL.md + build_qa_workbook.py, copied byte-for-byte, SHA-256 checked) now drives scenario generation; the builder is the user's Python script (Python 3.14.7, openpyxl 3.1.5).
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | ✅ |
+| `npm test` | ✅ **112 / 112**. New `test/skill-flow.test.ts` runs the **real Python builder**: valid spec PASS with all sheets and Execution Status "Not Run"; bad spec (unknown requirement ref, vague expected result, Passed without evidence) blocked; BUILDER_MISSING before any AI work; SKILL.md + app note sent as instructions; failed audit → one fix round with the errors → PASS; still failing → `_DRAFT` file with errors; AI error / schema mismatch / no rows / scanned PDF save nothing; scenarios stored per Scenario ID with steps in analyst order; step edit → revision with "Step 2: Expected Result" diff; approval reset; manual `3657_MAN01`; export rebuilt by the builder with Review Status; approved-only removes other scenarios from the matrix; history; APP_V1 runs still export. Command-line guard: the request fits Windows' 32 KB limit. |
+| `npm run test:e2e` | ✅ **25 / 25** (new: skill run with steps editor, edit step, revision compare, approve, audit badge, export through the Python builder on the UI test server) |
+| Bug found in the first live attempt | `spawn ENAMETOOLONG`: SKILL.md (62 KB) was passed as `--system-prompt` and exceeded the Windows command line (32 KB). Fixed with `--system-prompt-file` (verified with a probe first) plus a guard test. The run failed before any AI work. |
+| **Live run CR3657** (Claude Code, Opus 5.5) | ✅ 13.3 min, 104,473 output tokens. **Builder audit PASS on the first attempt, 0 errors, 0 warnings**, no fix round. Module QT, design *Hybrid: Decision Matrix (procurement method x price configuration x zone completion) + flat functional table*. 32 scenarios, 1 matrix, 15 requirements traced, 13 clarifications, 0 unverified quotes. **WIP judged Applicable** (proposals saved at Pending Proposal Preparation before deployment), 4 WIP scenarios (3657_WP01-04) with expected results conditional on CL-04. File `CR3657_Test_Scenarios_v4.xlsx`. User review of the workbook still to do. |
+
+
 ## One CR analysis function: QA test scenarios — 2026-11-04
 
 Windows 11, Node.js 24.18, Playwright 1.64, Claude Code 2.1.316 (subscription).

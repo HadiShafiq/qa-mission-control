@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Copy, RotateCcw, ShieldAlert, XCircle } from 'lucide-react';
+import { CheckCircle2, Copy, Plus, RotateCcw, ShieldAlert, Trash2, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { useInvalidateAll } from '@/components/forms';
@@ -7,12 +7,25 @@ import { Button } from '@/components/ui/button';
 import { Dialog } from '@/components/ui/dialog';
 import { Field, Input, Select, Textarea } from '@/components/ui/form';
 import { ErrorNotice, Skeleton, StatusBadge } from '@/components/ui/misc';
-import { ApiError, SCENARIO_TYPES, api, isPictureSource, type Priority, type ReviewStatus, type ScenarioRevision, type ScenarioType, type TestScenario } from '@/lib/api';
+import {
+  ApiError,
+  SCENARIO_TYPES,
+  api,
+  isPictureSource,
+  type Priority,
+  type ReviewStatus,
+  type ScenarioRevision,
+  type ScenarioStep,
+  type ScenarioType,
+  type TestScenario,
+} from '@/lib/api';
 import { cn, formatDateTime, humanize } from '@/lib/utils';
 
 export function ReviewBadge({ status }: { status: ReviewStatus }) {
   return <StatusBadge status={status === 'APPROVED' ? 'REVIEW_APPROVED' : status} label={humanize(status)} />;
 }
+
+// ───────── Fixed-column form (runs saved before the QA skill, APP_V1) ─────────
 
 const TEXT_FIELDS = [
   ['requirementRef', 'Requirement / CR Reference'],
@@ -29,10 +42,9 @@ const LONG_FIELDS = [
   ['existingValue', 'Existing Value / Condition'],
   ['actionChange', 'Action / Change'],
   ['testData', 'Test Data / Precondition'],
-  ['expectedResult', 'Expected Result'],
   ['remarks', 'Remarks'],
 ] as const;
-type TextKey = (typeof TEXT_FIELDS)[number][0] | (typeof LONG_FIELDS)[number][0] | 'description' | 'sourceReference';
+type TextKey = (typeof TEXT_FIELDS)[number][0] | (typeof LONG_FIELDS)[number][0] | 'description' | 'expectedResult' | 'sourceReference';
 type Form = Record<TextKey, string> & { priority: Priority; regression: boolean; testType: ScenarioType[] };
 
 const TYPE_SET = new Set<string>(SCENARIO_TYPES);
@@ -76,31 +88,46 @@ function fieldErrors(err: unknown): Record<string, string> {
   return Object.fromEntries(err.details.map((d) => [d.field, d.message]));
 }
 
-/** Edit / review one scenario (scenarioId), or add one to a workbook (workbookId). */
+/**
+ * Edit / review one scenario (scenarioId), or add one to a workbook (workbookId).
+ * Scenarios generated with the QA skill have steps with module-adaptive columns
+ * (`columns`); older runs use the fixed form.
+ */
 export function ScenarioDialog({
   open,
   onOpenChange,
   scenarioId,
   workbookId,
+  columns,
   readOnly,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   scenarioId?: string | null;
   workbookId?: string;
+  columns?: string[] | null;
   readOnly: boolean;
 }) {
   const creating = !scenarioId;
   const invalidate = useInvalidateAll();
   const [tab, setTab] = useState<'details' | 'revisions'>('details');
   const [form, setForm] = useState<Form>(EMPTY);
+  const [steps, setSteps] = useState<Record<string, string>[]>([]);
   const [comment, setComment] = useState('');
 
   const q = useQuery({ queryKey: ['scenario', scenarioId], queryFn: () => api.get<TestScenario>(`/api/scenarios/${scenarioId}`), enabled: open && !creating });
   const s = q.data;
+  const skill = creating ? Boolean(columns?.length) : Boolean(s?.steps);
+  const stepColumns = useMemo(() => {
+    const base = columns?.length ? columns : [...new Set((s?.steps ?? []).flatMap((st) => Object.keys(st.cells)))];
+    return base.filter((c) => c !== 'Scenario ID');
+  }, [columns, s?.steps]);
 
   const save = useMutation({
-    mutationFn: () => (creating ? api.post<TestScenario>(`/api/scenario-workbooks/${workbookId}/scenarios`, form) : api.patch<TestScenario>(`/api/scenarios/${scenarioId}`, form)),
+    mutationFn: () => {
+      const body = skill ? { steps: steps.map((cells) => ({ cells })) } : form;
+      return creating ? api.post<TestScenario>(`/api/scenario-workbooks/${workbookId}/scenarios`, body) : api.patch<TestScenario>(`/api/scenarios/${scenarioId}`, body);
+    },
     onSuccess: (saved) => {
       invalidate();
       if (creating) {
@@ -121,18 +148,28 @@ export function ScenarioDialog({
   useEffect(() => {
     if (!open) return;
     setTab('details');
-    if (creating) setForm(EMPTY);
+    if (creating) {
+      setForm(EMPTY);
+      setSteps([{}]);
+    }
     save.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, scenarioId]);
   useEffect(() => {
     if (s && open) {
       setForm(toForm(s));
+      setSteps((s.steps ?? []).map((st) => ({ ...st.cells })));
       setComment(s.reviewComment ?? '');
     }
   }, [s, open]);
 
-  const dirty = creating ? form.description.trim() !== '' : Boolean(s && JSON.stringify(toForm(s)) !== JSON.stringify(form));
+  const dirty = skill
+    ? creating
+      ? steps.some((st) => Object.values(st).some((v) => v.trim()))
+      : Boolean(s && JSON.stringify((s.steps ?? []).map((st) => st.cells)) !== JSON.stringify(steps))
+    : creating
+      ? form.description.trim() !== ''
+      : Boolean(s && JSON.stringify(toForm(s)) !== JSON.stringify(form));
   const errs = fieldErrors(save.error);
   const set = (k: TextKey) => (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value }));
   const toggleType = (t: ScenarioType) => setForm((f) => ({ ...f, testType: f.testType.includes(t) ? f.testType.filter((x) => x !== t) : [...f.testType, t] }));
@@ -143,17 +180,25 @@ export function ScenarioDialog({
 
   const copy = async () => {
     if (!s) return;
-    const lines = [
-      `${s.scenarioCode} — ${s.description ?? s.title}`,
-      s.requirementRef && `Requirement: ${s.requirementRef}`,
-      [s.module, s.functionScreen].filter(Boolean).length ? `Module / screen: ${[s.module, s.functionScreen].filter(Boolean).join(' › ')}` : null,
-      s.testType && `Type: ${s.testType}`,
-      s.testData && `Test data / precondition: ${s.testData}`,
-      s.actionChange && `Action: ${s.actionChange}`,
-      s.expectedResult && `Expected result: ${s.expectedResult}`,
-      `Priority: ${humanize(s.priority)} · Status: ${humanize(s.reviewStatus)}`,
-      s.sourceReference && `Source: ${s.sourceReference}${s.sourceVerified ? ' (quote verified)' : ''}`,
-    ].filter(Boolean);
+    const lines = s.steps
+      ? [
+          `${s.scenarioCode} (${s.steps.length} step${s.steps.length === 1 ? '' : 's'}) · ${humanize(s.reviewStatus)}`,
+          ...s.steps.flatMap((st, i) => [
+            `— Step ${i + 1}`,
+            ...Object.entries(st.cells)
+              .filter(([k, v]) => k !== 'Scenario ID' && v.trim())
+              .map(([k, v]) => `${k}: ${v}`),
+          ]),
+        ]
+      : [
+          `${s.scenarioCode} — ${s.description ?? s.title}`,
+          s.requirementRef && `Requirement: ${s.requirementRef}`,
+          s.testData && `Test data / precondition: ${s.testData}`,
+          s.actionChange && `Action: ${s.actionChange}`,
+          s.expectedResult && `Expected result: ${s.expectedResult}`,
+          `Priority: ${humanize(s.priority)} · Status: ${humanize(s.reviewStatus)}`,
+          s.sourceReference && `Source: ${s.sourceReference}${s.sourceVerified ? ' (quote verified)' : ''}`,
+        ].filter(Boolean);
     try {
       await navigator.clipboard.writeText(lines.join('\n'));
       toast.success(`Copied ${s.scenarioCode}`);
@@ -168,7 +213,13 @@ export function ScenarioDialog({
       onOpenChange={onOpenChange}
       size="lg"
       title={creating ? 'Add test scenario' : s ? s.scenarioCode : 'Test scenario'}
-      description={creating ? 'Add a scenario the analysis missed. It starts as Pending review.' : s ? `Revision ${s.revision} · ${s.origin === 'AI' ? 'Generated by the scenario analyst' : 'Added manually'}` : undefined}
+      description={
+        creating
+          ? 'Add a scenario the analysis missed. It starts as Pending review.'
+          : s
+            ? `Revision ${s.revision} · ${s.origin === 'AI' ? 'Generated with the QA skill' : 'Added manually'}${s.steps ? ` · ${s.steps.length} step${s.steps.length === 1 ? '' : 's'}` : ''}`
+            : undefined
+      }
       footer={
         tab === 'details' && !readOnly ? (
           <>
@@ -216,66 +267,11 @@ export function ScenarioDialog({
             <form id="scenario-form" onSubmit={submit} className="space-y-4">
               {save.error && !Object.keys(errs).length ? <ErrorNotice error={save.error} /> : null}
 
-              {s?.origin === 'AI' && (
-                <div className="space-y-1.5 rounded-md border border-line bg-surface-2 px-3 py-2.5 text-[13px]">
-                  {isPictureSource(s.sourceReference) ? (
-                    <p className="font-medium text-attn">From a picture in the document. Pictures can't be checked automatically, so compare it with the screenshot before approving.</p>
-                  ) : (
-                    <p className={s.sourceVerified ? 'text-signal' : 'font-medium text-attn'}>
-                      {s.sourceVerified ? 'Source verified: the quote was found at this location in the document.' : 'Source not verified: the quote was not found in the cited document. Check it before approving.'}
-                    </p>
-                  )}
-                  {s.sourceQuote && <blockquote className="border-l-2 border-line-strong pl-2 italic text-ink">“{s.sourceQuote}”</blockquote>}
-                </div>
+              {skill ? (
+                <StepsEditor columns={stepColumns} steps={steps} sources={s?.steps ?? undefined} onChange={setSteps} disabled={readOnly} />
+              ) : (
+                <FixedForm s={s} form={form} setForm={setForm} set={set} toggleType={toggleType} errs={errs} readOnly={readOnly} creating={creating} />
               )}
-
-              <Field label="Test Scenario Description" required error={errs.description}>
-                {(p) => <Textarea {...p} value={form.description} onChange={set('description')} disabled={readOnly} rows={2} autoFocus={creating} />}
-              </Field>
-              <Field label="Expected Result" error={errs.expectedResult}>
-                {(p) => <Textarea {...p} value={form.expectedResult} onChange={set('expectedResult')} disabled={readOnly} rows={3} />}
-              </Field>
-
-              <fieldset>
-                <legend className="mb-1.5 text-[13px] font-medium">Test Scenario Type</legend>
-                <div className="flex flex-wrap gap-1.5">
-                  {SCENARIO_TYPES.map((t) => (
-                    <label key={t} className={cn('flex cursor-pointer items-center gap-1.5 rounded border px-2 py-1 text-[12.5px]', form.testType.includes(t) ? 'border-signal bg-signal-soft text-signal' : 'border-line text-ink-2')}>
-                      <input type="checkbox" className="sr-only" checked={form.testType.includes(t)} onChange={() => toggleType(t)} disabled={readOnly} />
-                      {t}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                {TEXT_FIELDS.map(([k, label]) => (
-                  <Field key={k} label={label} error={errs[k]}>
-                    {(p) => <Input {...p} value={form[k]} onChange={set(k)} disabled={readOnly} maxLength={300} />}
-                  </Field>
-                ))}
-                <Field label="Priority">
-                  {(p) => (
-                    <Select {...p} value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as Priority }))} disabled={readOnly}>
-                      <option value="HIGH">High</option>
-                      <option value="MEDIUM">Medium</option>
-                      <option value="LOW">Low</option>
-                    </Select>
-                  )}
-                </Field>
-                <label className="flex items-center gap-2 self-end pb-2 text-[13.5px]">
-                  <input type="checkbox" className="accent-[var(--signal)]" checked={form.regression} onChange={(e) => setForm((f) => ({ ...f, regression: e.target.checked }))} disabled={readOnly} />
-                  Regression
-                </label>
-              </div>
-              {LONG_FIELDS.filter(([k]) => k !== 'expectedResult').map(([k, label]) => (
-                <Field key={k} label={label} error={errs[k]}>
-                  {(p) => <Textarea {...p} value={form[k]} onChange={set(k)} disabled={readOnly} rows={2} />}
-                </Field>
-              ))}
-              <Field label="Source reference" hint={s?.sourceVerified ? 'Editing the reference removes the "verified" mark.' : 'Document, section, table row or picture.'} error={errs.sourceReference}>
-                {(p) => <Input {...p} value={form.sourceReference} onChange={set('sourceReference')} disabled={readOnly} maxLength={500} />}
-              </Field>
 
               {s && !readOnly && (
                 <div className="space-y-2 rounded-md border border-line px-3 py-3">
@@ -310,6 +306,156 @@ export function ScenarioDialog({
   );
 }
 
+const LONG_COLUMN = /expected|action|step$|test step|precondition|test data|condition|description|details|remarks|rule|message|note/i;
+
+/** One card per workflow step; one field per column chosen by the QA skill for this CR. */
+function StepsEditor({
+  columns,
+  steps,
+  sources,
+  onChange,
+  disabled,
+}: {
+  columns: string[];
+  steps: Record<string, string>[];
+  sources?: ScenarioStep[];
+  onChange: (s: Record<string, string>[]) => void;
+  disabled: boolean;
+}) {
+  const update = (i: number, col: string, value: string) => onChange(steps.map((st, j) => (j === i ? { ...st, [col]: value } : st)));
+  return (
+    <div className="space-y-4" data-testid="steps-editor">
+      {steps.map((st, i) => {
+        const src = sources?.[i];
+        return (
+          <fieldset key={i} className="rounded-md border border-line px-3 pb-3 pt-1" data-testid={`step-${i + 1}`}>
+            <legend className="px-1 text-[13px] font-medium">
+              Step {i + 1}
+              {st['Step ID'] ? <span className="font-normal text-ink-3"> · {st['Step ID']}</span> : null}
+            </legend>
+            {src?.sourceReference && (
+              <p className={cn('mb-2 text-[12.5px]', isPictureSource(src.sourceReference) || !src.sourceVerified ? 'font-medium text-attn' : 'text-signal')}>
+                Source: {src.sourceReference.replace(/^.*› /, '')} —{' '}
+                {isPictureSource(src.sourceReference) ? 'from a picture, compare it with the screenshot' : src.sourceVerified ? 'quote verified' : 'quote not found in the document, check it'}
+                {src.sourceQuote && <span className="block font-normal italic text-ink-2">“{src.sourceQuote}”</span>}
+              </p>
+            )}
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {columns.map((c) => (
+                <div key={c} className={cn(LONG_COLUMN.test(c) && 'sm:col-span-2')}>
+                  <Field label={c}>
+                    {(p) =>
+                      LONG_COLUMN.test(c) ? (
+                        <Textarea {...p} rows={2} value={st[c] ?? ''} onChange={(e) => update(i, c, e.target.value)} disabled={disabled} />
+                      ) : (
+                        <Input {...p} value={st[c] ?? ''} onChange={(e) => update(i, c, e.target.value)} disabled={disabled} maxLength={500} />
+                      )
+                    }
+                  </Field>
+                </div>
+              ))}
+            </div>
+            {!disabled && steps.length > 1 && (
+              <Button size="sm" variant="ghost" type="button" className="mt-2" onClick={() => onChange(steps.filter((_s, j) => j !== i))}>
+                <Trash2 /> Remove step {i + 1}
+              </Button>
+            )}
+          </fieldset>
+        );
+      })}
+      {!disabled && (
+        <Button size="sm" type="button" onClick={() => onChange([...steps, {}])}>
+          <Plus /> Add step
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function FixedForm({
+  s,
+  form,
+  setForm,
+  set,
+  toggleType,
+  errs,
+  readOnly,
+  creating,
+}: {
+  s?: TestScenario;
+  form: Form;
+  setForm: (f: (x: Form) => Form) => void;
+  set: (k: TextKey) => (e: { target: { value: string } }) => void;
+  toggleType: (t: ScenarioType) => void;
+  errs: Record<string, string>;
+  readOnly: boolean;
+  creating: boolean;
+}) {
+  return (
+    <>
+      {s?.origin === 'AI' && (
+        <div className="space-y-1.5 rounded-md border border-line bg-surface-2 px-3 py-2.5 text-[13px]">
+          {isPictureSource(s.sourceReference) ? (
+            <p className="font-medium text-attn">From a picture in the document. Pictures can't be checked automatically, so compare it with the screenshot before approving.</p>
+          ) : (
+            <p className={s.sourceVerified ? 'text-signal' : 'font-medium text-attn'}>
+              {s.sourceVerified ? 'Source verified: the quote was found at this location in the document.' : 'Source not verified: the quote was not found in the cited document. Check it before approving.'}
+            </p>
+          )}
+          {s.sourceQuote && <blockquote className="border-l-2 border-line-strong pl-2 italic text-ink">“{s.sourceQuote}”</blockquote>}
+        </div>
+      )}
+      <Field label="Test Scenario Description" required error={errs.description}>
+        {(p) => <Textarea {...p} value={form.description} onChange={set('description')} disabled={readOnly} rows={2} autoFocus={creating} />}
+      </Field>
+      <Field label="Expected Result" error={errs.expectedResult}>
+        {(p) => <Textarea {...p} value={form.expectedResult} onChange={set('expectedResult')} disabled={readOnly} rows={3} />}
+      </Field>
+      <fieldset>
+        <legend className="mb-1.5 text-[13px] font-medium">Test Scenario Type</legend>
+        <div className="flex flex-wrap gap-1.5">
+          {SCENARIO_TYPES.map((t) => (
+            <label key={t} className={cn('flex cursor-pointer items-center gap-1.5 rounded border px-2 py-1 text-[12.5px]', form.testType.includes(t) ? 'border-signal bg-signal-soft text-signal' : 'border-line text-ink-2')}>
+              <input type="checkbox" className="sr-only" checked={form.testType.includes(t)} onChange={() => toggleType(t)} disabled={readOnly} />
+              {t}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {TEXT_FIELDS.map(([k, label]) => (
+          <Field key={k} label={label} error={errs[k]}>
+            {(p) => <Input {...p} value={form[k]} onChange={set(k)} disabled={readOnly} maxLength={300} />}
+          </Field>
+        ))}
+        <Field label="Priority">
+          {(p) => (
+            <Select {...p} value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value as Priority }))} disabled={readOnly}>
+              <option value="HIGH">High</option>
+              <option value="MEDIUM">Medium</option>
+              <option value="LOW">Low</option>
+            </Select>
+          )}
+        </Field>
+        <label className="flex items-center gap-2 self-end pb-2 text-[13.5px]">
+          <input type="checkbox" className="accent-[var(--signal)]" checked={form.regression} onChange={(e) => setForm((f) => ({ ...f, regression: e.target.checked }))} disabled={readOnly} />
+          Regression
+        </label>
+      </div>
+      {LONG_FIELDS.map(([k, label]) => (
+        <Field key={k} label={label} error={errs[k]}>
+          {(p) => <Textarea {...p} value={form[k]} onChange={set(k)} disabled={readOnly} rows={2} />}
+        </Field>
+      ))}
+      <Field label="Source reference" hint={s?.sourceVerified ? 'Editing the reference removes the "verified" mark.' : 'Document, section, table row or picture.'} error={errs.sourceReference}>
+        {(p) => <Input {...p} value={form.sourceReference} onChange={set('sourceReference')} disabled={readOnly} maxLength={500} />}
+      </Field>
+    </>
+  );
+}
+
+// ───────── Revisions ─────────
+
 const FIELD_LABELS: Record<string, string> = {
   description: 'Description',
   expectedResult: 'Expected Result',
@@ -334,6 +480,18 @@ const FIELD_LABELS: Record<string, string> = {
   reviewComment: 'Review comment',
 };
 
+/** Revision snapshot → label/value pairs (skill steps are flattened to "Step N: column"). */
+function flatten(snapshot: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(snapshot.steps)) return Object.fromEntries(Object.keys(FIELD_LABELS).map((k) => [FIELD_LABELS[k], snapshot[k]]));
+  const out: Record<string, unknown> = {};
+  (snapshot.steps as { cells: Record<string, string> }[]).forEach((st, i) => {
+    for (const [k, v] of Object.entries(st.cells)) if (k !== 'Scenario ID') out[`Step ${i + 1}: ${k}`] = v;
+  });
+  out['Review status'] = snapshot.reviewStatus;
+  out['Review comment'] = snapshot.reviewComment;
+  return out;
+}
+
 function show(v: unknown) {
   if (v === null || v === undefined || v === '') return '—';
   if (typeof v === 'boolean') return v ? 'Yes' : 'No';
@@ -353,19 +511,21 @@ function RevisionCompare({ scenarioId }: { scenarioId: string }) {
   }, [revs.data]);
   const left = revs.data?.find((r) => r.revision === a);
   const right = revs.data?.find((r) => r.revision === b);
-  const fields = useMemo(() => Object.keys(FIELD_LABELS), []);
+  const l = useMemo(() => (left ? flatten(left.snapshot) : {}), [left]);
+  const r = useMemo(() => (right ? flatten(right.snapshot) : {}), [right]);
+  const fields = useMemo(() => [...new Set([...Object.keys(l), ...Object.keys(r)])], [l, r]);
 
   if (revs.isError) return <ErrorNotice error={revs.error} />;
   if (!revs.data) return <Skeleton className="h-40" />;
   return (
     <div className="space-y-4">
       <ol className="divide-y divide-line rounded-md border border-line text-[13px]" data-testid="revision-list">
-        {revs.data.map((r) => (
-          <li key={r.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
-            <span className="font-medium">Rev {r.revision}</span>
-            <span className="text-ink-2">{r.changeNote ?? 'Changed'}</span>
+        {revs.data.map((rv) => (
+          <li key={rv.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
+            <span className="font-medium">Rev {rv.revision}</span>
+            <span className="text-ink-2">{rv.changeNote ?? 'Changed'}</span>
             <span className="ml-auto text-ink-3">
-              {r.createdBy}, {formatDateTime(r.createdAt)}
+              {rv.createdBy}, {formatDateTime(rv.createdAt)}
             </span>
           </li>
         ))}
@@ -375,17 +535,17 @@ function RevisionCompare({ scenarioId }: { scenarioId: string }) {
           <div className="mb-2 flex flex-wrap items-center gap-2 text-[13px]">
             <span>Compare</span>
             <Select aria-label="Older revision" className="w-auto" value={a ?? ''} onChange={(e) => setA(Number(e.target.value))}>
-              {revs.data.map((r) => (
-                <option key={r.id} value={r.revision}>
-                  Rev {r.revision}
+              {revs.data.map((rv) => (
+                <option key={rv.id} value={rv.revision}>
+                  Rev {rv.revision}
                 </option>
               ))}
             </Select>
             <span>with</span>
             <Select aria-label="Newer revision" className="w-auto" value={b ?? ''} onChange={(e) => setB(Number(e.target.value))}>
-              {revs.data.map((r) => (
-                <option key={r.id} value={r.revision}>
-                  Rev {r.revision}
+              {revs.data.map((rv) => (
+                <option key={rv.id} value={rv.revision}>
+                  Rev {rv.revision}
                 </option>
               ))}
             </Select>
@@ -402,12 +562,12 @@ function RevisionCompare({ scenarioId }: { scenarioId: string }) {
                 </thead>
                 <tbody className="divide-y divide-line">
                   {fields.map((f) => {
-                    const changed = show(left.snapshot[f]) !== show(right.snapshot[f]);
+                    const changed = show(l[f]) !== show(r[f]);
                     return (
                       <tr key={f} className={cn(changed && 'bg-signal-soft')} data-changed={changed || undefined}>
-                        <td className="whitespace-nowrap px-2 py-1.5 align-top text-ink-2">{FIELD_LABELS[f]}</td>
-                        <td className={cn('px-2 py-1.5 align-top', changed && 'text-ink-2 line-through decoration-ink-3')}>{show(left.snapshot[f])}</td>
-                        <td className={cn('px-2 py-1.5 align-top', changed && 'font-medium')}>{show(right.snapshot[f])}</td>
+                        <td className="whitespace-nowrap px-2 py-1.5 align-top text-ink-2">{f}</td>
+                        <td className={cn('px-2 py-1.5 align-top', changed && 'text-ink-2 line-through decoration-ink-3')}>{show(l[f])}</td>
+                        <td className={cn('px-2 py-1.5 align-top', changed && 'font-medium')}>{show(r[f])}</td>
                       </tr>
                     );
                   })}

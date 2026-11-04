@@ -114,6 +114,7 @@ All settings are in `server/.env` (never commit this file). See `server/.env.exa
 | `AI_TIMEOUT_SECONDS` | `900` | Timeout per AI request |
 
 | `AI_PROVIDER` | `auto` | `auto`: API key if set → otherwise the **Claude Code CLI** on this PC (uses your Claude subscription, no API credit) → otherwise an `ant auth login` profile. Force one with `anthropic-api` or `claude-code` |
+| `PYTHON_PATH` | `py` (Windows) / `python3` | Python that runs the QA skill's `build_qa_workbook.py`. Needs openpyxl: `py -m pip install openpyxl` |
 | `CLAUDE_CODE_PATH` | `claude.exe` | Path to the Claude Code CLI, if it isn't on PATH |
 
 **Using your Claude subscription (no API credit):** if Claude Code is installed and signed in on this PC, the app runs `claude -p` for each analysis. It runs with no tools, no MCP servers and no saved session, in an empty temporary folder, so document content cannot make it run commands or read files. Images can't be analysed this way (text documents only). Usage counts toward your subscription limits.

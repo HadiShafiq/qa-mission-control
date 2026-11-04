@@ -3,10 +3,13 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../context.js';
 import { AppError } from '../lib/errors.js';
+import { builderAvailable } from '../lib/workbookBuilder.js';
 
 export const APP_VERSION = '0.2.0-phase2';
 
 export async function systemRoutes(app: FastifyInstance, { db, storage, config, ai }: AppContext) {
+  const builder = builderAvailable(config.pythonPath);
+
   app.get('/api/health', async (_req, reply) => {
     const checks = { database: false, storage: false };
     try {
@@ -35,6 +38,7 @@ export async function systemRoutes(app: FastifyInstance, { db, storage, config, 
     database: config.databaseUrl.startsWith('file:') ? 'SQLite' : 'PostgreSQL',
     storageDir: config.storageDir,
     maxUploadMb: Math.round(config.maxUploadBytes / 1024 / 1024),
+    workbookBuilder: { available: Boolean(builder), detail: builder ?? `Not available: needs Python with openpyxl (PYTHON_PATH=${config.pythonPath})`, skill: 'qa-test-scenario-generator' },
     ai: {
       provider: 'Anthropic',
       configured: Boolean(ai),

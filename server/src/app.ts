@@ -6,7 +6,7 @@ import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
 import { Prisma, PrismaClient } from '@prisma/client';
 import Fastify from 'fastify';
-import { SCENARIO_ANALYST, scenarioAnalystHandler } from './agents/scenarioAnalyst.js';
+import { SCENARIO_ANALYST, scenarioAnalystHandler } from './agents/skillAnalyst.js';
 import { TaskRunner } from './agents/runner.js';
 import type { AppConfig } from './config.js';
 import type { AppContext } from './context.js';

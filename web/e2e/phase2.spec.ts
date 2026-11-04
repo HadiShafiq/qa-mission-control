@@ -312,3 +312,151 @@ test('mobile: analysis page has no horizontal overflow', async ({ page }) => {
   );
   expect(offenders).toEqual([]);
 });
+
+test('QA skill run: steps editor, edit a step, approve, audit badge, export through the skill builder', async ({ page, request }) => {
+  const p = await request.post('/api/projects', { data: { code: 'SKILL', name: 'Skill Project' } });
+  const projectId = (await p.json()).id as string;
+  const cr = await request.post(`/api/projects/${projectId}/crs`, { data: { crNumber: 'CR3657', title: 'Unit price validation' } });
+  const id = (await cr.json()).id as string;
+
+  // Store a run exactly as the QA skill analyst saves it (spec + one row per Scenario ID with steps).
+  const db = new PrismaClient({ datasourceUrl: `file:${path.resolve(import.meta.dirname, '..', '..', '.e2e', 'e2e.db')}` });
+  try {
+    const columns = ['Scenario ID', 'Step ID', 'Requirement Reference', 'Scenario Category', 'Role', 'Current Status', 'Action / Test Step', 'Expected Result', 'Priority'];
+    const step = (sid: string, n: number, action: string, expected: string, category = 'Negative') => ({
+      cells: {
+        'Scenario ID': sid,
+        'Step ID': `${sid}_S0${n}`,
+        'Requirement Reference': 'FR-01',
+        'Scenario Category': category,
+        Role: 'Supplier',
+        'Current Status': 'Pending Proposal Preparation',
+        'Action / Test Step': action,
+        'Expected Result': expected,
+        Priority: 'High',
+      },
+      sourceReference: 'frs.docx (v1) › Section "FR-01 Validation"',
+      sourceQuote: 'the system shall validate mandatory Unit Price fields',
+      sourceVerified: true,
+    });
+    const groups: [string, ReturnType<typeof step>[]][] = [
+      ['3657_SC01', [step('3657_SC01', 1, 'Click Complete with no zone complete', 'Completion is blocked with the minimum-one-zone message.'), step('3657_SC01', 2, 'Open the current zone', 'Mandatory fields show an X indicator.')]],
+      ['3657_SC02', [step('3657_SC02', 1, 'Click Complete with all prices entered', 'Completion succeeds.', 'Positive')]],
+    ];
+    const spec = {
+      meta: { cr_no: 'CR3657', title: 'Unit price validation', module: 'QT', phase: 'SIT', source: 'frs.docx v1', version: '1.0', execution_columns: true, execution_evidence_provided: false, document_numbers_user_provided: false },
+      scenarios: { sheet_name: 'Test Scenarios', columns },
+      matrices: [],
+      tables: [],
+      requirements: [{ ref: 'FR-01', description: 'Validate mandatory Unit Price fields', dimensions: 'Procurement Method', status_coverage: '', role_coverage: 'Supplier', wip_assessment: 'N/A - no saved state', remarks: '' }],
+      clarifications: [{ id: 'CL-01', ref: 'FR-01', ambiguity: 'Partial zones', impact: 'Unknown result', question: 'Clear partial entries?', status: 'Open' }],
+      scenarioOrder: ['3657_SC01', '3657_SC02'],
+    };
+    const w = await db.scenarioWorkbook.create({
+      data: {
+        crId: id,
+        version: 1,
+        model: 'seeded-for-ui-test',
+        format: 'SKILL_V1',
+        spec: JSON.stringify(spec),
+        columns: JSON.stringify(columns),
+        design: 'Status-based table',
+        auditResult: 'PASS',
+        auditReport: 'RESULT: PASS',
+        documents: '["frs.docx (v1)"]',
+        dimensions: '[]',
+        wip: '{"applicable":false,"statement":"N/A"}',
+        enhancement: '{"applicable":false,"statement":""}',
+        decisionTables: '[]',
+        requirementCoverage: '[]',
+        wipCoverage: '[]',
+        enhancementCoverage: '[]',
+        clarifications: '[]',
+        selfReview: '[]',
+        checks: '[]',
+      },
+    });
+    for (const [sid, steps] of groups) {
+      const s = await db.testScenario.create({
+        data: {
+          crId: id,
+          workbookId: w.id,
+          scenarioCode: sid,
+          title: steps[0].cells['Action / Test Step'],
+          description: steps[0].cells['Action / Test Step'],
+          expectedResult: steps.map((x) => x.cells['Expected Result']).join('\n'),
+          testType: steps[0].cells['Scenario Category'],
+          priority: 'HIGH',
+          userRole: 'Supplier',
+          steps: JSON.stringify(steps),
+          sourceReference: steps[0].sourceReference,
+          sourceVerified: true,
+          origin: 'AI',
+        },
+      });
+      await db.scenarioRevision.create({ data: { scenarioId: s.id, revision: 1, snapshot: JSON.stringify({ steps, reviewStatus: 'PENDING', reviewComment: null }), changeNote: 'Generated (seeded)' } });
+    }
+    const output = {
+      format: 'SKILL_V1',
+      workbookId: w.id,
+      artifactId: 'none',
+      fileName: 'CR3657_Test_Scenarios_v1.xlsx',
+      design: 'Status-based table: one rule across methods',
+      wipDecision: 'N/A - no saved transaction state',
+      module: 'QT',
+      scenarioCount: 2,
+      stepCount: 3,
+      matrixCount: 0,
+      requirementCount: 1,
+      clarificationCount: 1,
+      unverifiedCount: 0,
+      auditResult: 'PASS',
+      auditErrors: [],
+      auditWarnings: ['Requirement FR-02 has no coverage'],
+      repaired: false,
+      checks: [],
+    };
+    await db.agentTask.create({
+      data: { projectId, crId: id, agent: 'SCENARIO_ANALYST', taskType: 'TEST_SCENARIO_WORKBOOK', status: 'COMPLETED', progress: 100, model: 'seeded-for-ui-test', finishedAt: new Date(), output: JSON.stringify(output) },
+    });
+  } finally {
+    await db.$disconnect();
+  }
+
+  await page.goto(`/cr-analysis/${id}`);
+  await expect(page.getByTestId('audit-result')).toHaveText('Builder audit PASS');
+  await expect(page.getByTestId('skill-result')).toContainText('Design: Status-based table');
+  await expect(page.getByTestId('scenarios-table')).toContainText('2 steps');
+
+  await page.getByTestId('scenarios-table').getByRole('button', { name: '3657_SC01' }).click();
+  const dlg = page.getByRole('dialog');
+  await expect(dlg.getByTestId('step-2').getByLabel('Expected Result')).toHaveValue('Mandatory fields show an X indicator.');
+  await expect(dlg.getByTestId('step-1')).toContainText('quote verified');
+  await dlg.getByTestId('step-2').getByLabel('Expected Result').fill('Each missing Unit Price field shows an X indicator.');
+  await dlg.getByRole('button', { name: 'Save changes' }).click();
+  await expect(dlg).toContainText('Revision 2');
+  await dlg.getByRole('tab', { name: /Revisions/ }).click();
+  await expect(dlg.getByTestId('revision-compare').locator('tr[data-changed]')).toContainText('Step 2: Expected Result');
+  await dlg.getByRole('tab', { name: 'Details' }).click();
+  await dlg.getByRole('button', { name: 'Approve' }).click();
+  await expect(dlg.getByText('Approved', { exact: true })).toBeVisible();
+  await page.keyboard.press('Escape');
+
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByTestId('export-scenarios').click()]);
+  expect(download.suggestedFilename()).toBe('CR3657_Test_Scenarios_v1.xlsx');
+  const chunks: Buffer[] = [];
+  for await (const c of await download.createReadStream()) chunks.push(c as Buffer);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(Buffer.concat(chunks) as unknown as ArrayBuffer);
+  expect(wb.worksheets.map((ws) => ws.name)).toEqual(['Test Scenarios', 'Requirement Coverage', 'Clarifications', 'Scenario Summary']);
+  const rows = wb
+    .getWorksheet('Test Scenarios')!
+    .getSheetValues()
+    .filter(Boolean)
+    .map((r) => (r as unknown[]).slice(1).map((v) => String(v ?? '')));
+  const header = rows.find((r) => r.includes('Scenario ID'))!;
+  const body = rows.slice(rows.indexOf(header) + 1);
+  expect(body[1][header.indexOf('Expected Result')]).toBe('Each missing Unit Price field shows an X indicator.');
+  expect(body[0][header.indexOf('Review Status')]).toBe('Approved');
+  expect(body[0][header.indexOf('Execution Status')]).toBe('Not Run');
+});

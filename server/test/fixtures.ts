@@ -138,3 +138,52 @@ export class ScriptedAi implements AiClient {
 
 /** Text of all text blocks sent to the model. */
 export const promptText = (content: AiContent) => content.map((b) => (b.type === 'text' ? b.text : `[${b.type}]`)).join('\n');
+
+// ───────── QA skill answers (scenario generator) ─────────
+
+type SkillAnswer = import('../src/agents/skillAnalyst.js').SkillSpec;
+const cellsOf = (o: Record<string, string>) => Object.entries(o).map(([column, value]) => ({ column, value }));
+
+/** A valid answer in the skill's D.6 shape: 2 scenarios (3 step rows), a matrix, coverage, a clarification. */
+export function skillAnswer(over: Partial<SkillAnswer> = {}): SkillAnswer {
+  const quote = 'the system shall validate mandatory Unit Price fields';
+  const loc = 'Section "FR-01 Validation"';
+  const row = (o: Record<string, string>) => ({ cells: cellsOf(o), documentIndex: 1, location: loc, quote });
+  return {
+    design: 'Status-based table: one validation rule checked for Tender and Quotation.',
+    wip_decision: 'N/A - the change reads current proposal data; no saved transaction state is affected.',
+    meta: { cr_no: 'CR3657', title: 'Unit price validation', module: 'QT', phase: 'SIT', source: 'frs.docx v1', version: '1.0' },
+    scenarios: {
+      sheet_name: 'Test Scenarios',
+      columns: ['Scenario ID', 'Step ID', 'Requirement Reference', 'Scenario Category', 'Role', 'Current Status', 'Precondition', 'Action / Test Step', 'Expected Result', 'Priority'],
+      group_headers: [],
+      rows: [
+        row({ 'Scenario ID': '3657_SC01', 'Step ID': '3657_SC01_S01', 'Requirement Reference': 'FR-01', 'Scenario Category': 'Negative', Role: 'Supplier', 'Current Status': 'Pending Proposal Preparation', Precondition: 'Tender with two zones, none complete (Test Data Required)', 'Action / Test Step': 'Click Complete', 'Expected Result': 'Completion is blocked and the minimum-one-zone message is displayed.', Priority: 'High' }),
+        row({ 'Scenario ID': '3657_SC01', 'Step ID': '3657_SC01_S02', 'Requirement Reference': 'FR-01', 'Scenario Category': 'Negative', Role: 'Supplier', 'Current Status': 'Pending Proposal Preparation', Precondition: 'Continue from step 1', 'Action / Test Step': 'Open the current zone', 'Expected Result': 'Every mandatory Unit Price field in the current zone shows an X indicator.', Priority: 'High' }),
+        row({ 'Scenario ID': '3657_SC02', 'Step ID': '3657_SC02_S01', 'Requirement Reference': 'FR-01', 'Scenario Category': 'Positive', Role: 'Supplier', 'Current Status': 'Pending Proposal Preparation', Precondition: 'Quotation with all prices entered (Test Data Required)', 'Action / Test Step': 'Click Complete', 'Expected Result': 'Completion succeeds and the proposal moves to the next status.', Priority: 'Medium' }),
+      ],
+    },
+    matrices: [
+      {
+        name: 'Decision Matrix',
+        title: 'Method x zone completion',
+        rule: 'FR-01',
+        scenario_ids: ['3657_SC01', '3657_SC02'],
+        conditions: [
+          { dimension: 'Procurement Method', value: 'Tender', x: ['3657_SC01'] },
+          { dimension: 'Procurement Method', value: 'Quotation', x: ['3657_SC02'] },
+        ],
+        expected: [
+          { scenario_id: '3657_SC01', value: 'Blocked with the minimum-one-zone message' },
+          { scenario_id: '3657_SC02', value: 'Completion allowed' },
+        ],
+        next_status: [],
+        uncovered: [{ combination: 'Panel + partial zone', reason: 'Behaviour not defined - see CL-01' }],
+      },
+    ],
+    tables: [{ name: 'QA Self-Review', title: 'QA Self-Review', note: '', columns: ['Area', 'Check', 'Result', 'Note'], rows: [{ cells: cellsOf({ Area: 'Requirement analysis', Check: 'Entire CR / FRS reviewed', Result: 'Pass', Note: '' }) }] }],
+    requirements: [{ ref: 'FR-01', description: 'Validate mandatory Unit Price fields on Complete', dimensions: 'Procurement Method', status_coverage: 'Pending Proposal Preparation', role_coverage: 'Supplier', wip_assessment: 'N/A - no saved transaction state', coverage_status: null, remarks: '' }],
+    clarifications: [{ id: 'CL-01', ref: 'FR-01', ambiguity: 'Partial zone together with a complete zone', impact: 'Expected result unknown', question: 'Must partial entries be cleared before Complete?', status: 'Open' }],
+    ...over,
+  };
+}
