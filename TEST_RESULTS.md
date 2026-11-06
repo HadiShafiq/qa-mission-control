@@ -1,5 +1,16 @@
 # Test results
 
+## Sidebar and browser-tab icon changed — 2026-11-06
+
+The tick icon was replaced with the user's image `web/public/cdc-favicon.jpg` in the sidebar and the browser tab.
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | ✅ |
+| `npm test` | ✅ **112 / 112** |
+| `npm run test:e2e` | ✅ **25 / 25** |
+| Real app in Chromium, light and dark | ✅ Sidebar image loads; checked by screenshot (no automated test covers the icon). Browser-tab icon: file served and linked in the HTML, not seen in a real tab. |
+
 ## Scenario generation with the user's QA skill — 2026-11-05
 
 The user's skill **qa-test-scenario-generator** (SKILL.md + build_qa_workbook.py, copied byte-for-byte, SHA-256 checked) now drives scenario generation; the builder is the user's Python script (Python 3.14.7, openpyxl 3.1.5).

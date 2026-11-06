@@ -30,7 +30,7 @@ export function AppShell() {
       >
         <div className="flex h-14 items-center justify-between border-b border-line px-4">
           <NavLink to="/" className="flex items-center gap-2.5 font-semibold text-ink">
-            <img src="/favicon.svg" alt="" className="size-7" />
+            <img src="/cdc-favicon.jpg" alt="" className="size-7 rounded" />
             <span className="leading-tight">
               QA Mission Control
             </span>

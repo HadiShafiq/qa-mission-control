@@ -2,6 +2,10 @@
 
 **Current phase:** Phase 2 — CR Analysis ✅, reshaped on 2026-11-04 into **one function: QA test scenarios**. Built and tested on Windows 11. Waiting for your review of the generated workbooks, then `NEXT`.
 
+## Icon changed (2026-11-06)
+
+The sidebar and browser-tab icon now use `web/public/cdc-favicon.jpg` instead of the tick. `web/public/favicon.svg` is no longer referenced but has been kept.
+
 ## Scenario generation now uses your QA skill (2026-11-05)
 
 **Generate test scenarios** follows your skill *qa-test-scenario-generator* exactly (`server/skills/qa-test-scenario-generator/`, never edited): module-adaptive design, WIP / Non-WIP as deployment origin, Step IDs, execution columns starting at "Not Run". Your `build_qa_workbook.py` builds and audits every Excel. A failed audit gets one automatic fix round; if it still fails, the file is saved as `_DRAFT` with the errors shown. Review in the app now edits each scenario's steps and columns, and exports go through your builder too. Requires Python + openpyxl (`PYTHON_PATH`, default `py`). Live CR3657 run: audit PASS first time, 32 scenarios, 13 clarifications, WIP applicable.
